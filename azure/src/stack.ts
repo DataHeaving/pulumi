@@ -8,11 +8,7 @@ export interface PulumiAzureBackendStackAcquiringConfig {
   pulumi: {
     programArgs: automation.InlineProgramArgs;
     auth: PulumiAzureBackendAuth;
-    backendConfig: {
-      storageAccountName: string;
-      storageContainerName: string;
-      encryptionKeyURL: string;
-    };
+    backendConfig: PulumiAzureBackendConfig;
     /**
      * By default, if this option is not supplied, the behaviour is to use return value of @see {createDefaultProcessEnvVars}
      */
@@ -248,4 +244,10 @@ export interface PulumiAuthSP {
 export interface PulumiAuthMSI {
   type: "msi";
   clientId: string;
+}
+
+export interface PulumiAzureBackendConfig {
+  storageAccountName: string;
+  storageContainerName: string;
+  encryptionKeyURL: string;
 }
