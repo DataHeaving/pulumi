@@ -9,7 +9,7 @@ jobs:
   publish:
     strategy:
       matrix:
-        dir: [ automation ] # , azure
+        dir: [ automation, azure ]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
@@ -40,8 +40,8 @@ jobs:
           npm ci
           npm install --no-save @jsdevtools/npm-publish
           # We must invoke tests via Docker, as the tests are using Pulumi executables
-          cat Dockerfile | docker build --tag this_node -
           cd ..
+          cat Dockerfile | docker build --tag this_node -
           docker run \
             --rm \
             --entrypoint sh \
