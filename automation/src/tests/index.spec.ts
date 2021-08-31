@@ -6,10 +6,13 @@ import * as uuid from "uuid";
 import * as os from "os";
 import * as path from "path";
 import * as fs from "fs/promises";
+
 interface TestContext {
   stack: pulumi.Stack;
 }
+
 const thisTest = test as TestInterface<TestContext>;
+
 thisTest.before(async (t) => {
   const projectName = `UnitTests-${uuid.v4()}`;
 
