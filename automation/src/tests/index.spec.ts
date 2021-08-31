@@ -12,11 +12,6 @@ interface TestContext {
 const thisTest = test as TestInterface<TestContext>;
 thisTest.before(async (t) => {
   const projectName = `UnitTests-${uuid.v4()}`;
-  const tmpDir = await fs.mkdtemp(
-    path.join(os.tmpdir(), "pulumi-automation-tests-"),
-  );
-  const backendDir = tmpDir;
-  const backendURL = `file://${backendDir}`;
 
   const stack = await pulumi.LocalWorkspace.createStack(
     {
@@ -29,12 +24,18 @@ thisTest.before(async (t) => {
         name: projectName,
         runtime: "nodejs",
         backend: {
-          url: backendURL,
+          url: `file://${await fs.mkdtemp(
+            path.join(os.tmpdir(), "pulumi-automation-tests-"),
+          )}`,
         },
       },
       envVars: {
         PULUMI_CONFIG_PASSPHRASE: uuid.v4(),
       },
+      // We must set pulumi home directory explicitly, otherwise, when running on GitHub actions, we will get an error:
+      // could not get workspace path. source error: getting current user: luser: unable to get current user
+      // Furthermore, we must set the home directory to such that user executing pulumi process (Node user) will have write access to it
+      // So safest bet is to use temp dir, as with backend url
       pulumiHome: await fs.mkdtemp(
         path.join(os.tmpdir(), "pulumi-automation-tests-home"),
       ),
