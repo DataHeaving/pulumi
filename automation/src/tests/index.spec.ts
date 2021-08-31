@@ -35,7 +35,9 @@ thisTest.before(async (t) => {
       envVars: {
         PULUMI_CONFIG_PASSPHRASE: uuid.v4(),
       },
-      pulumiHome: `/pulumi-${uuid.v4()}`,
+      pulumiHome: await fs.mkdtemp(
+        path.join(os.tmpdir(), "pulumi-automation-tests-home"),
+      ),
     },
   );
   t.context.stack = stack;
