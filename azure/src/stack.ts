@@ -37,20 +37,25 @@ export interface PulumiAzureBackendStackAcquiringConfig {
 export const getOrCreateStackWithAzureBackend = async (
   parameters: PulumiAzureBackendStackAcquiringConfig,
 ) => {
+  return automation.LocalWorkspace.createOrSelectStack(
+    parameters.pulumi.programArgs,
+    createLocalWorkspaceOptionsForStackWithAzureBackend(parameters),
+  );
+};
+
+export const createLocalWorkspaceOptionsForStackWithAzureBackend = (
+  parameters: PulumiAzureBackendStackAcquiringConfig,
+) => {
   const { envVars, ...settings } = getCommonLocalWorkspaceOptions(parameters);
-  const { programArgs, processEnvVars, processLocalWorkspaceOptions } =
-    parameters.pulumi;
+  const { processEnvVars, processLocalWorkspaceOptions } = parameters.pulumi;
   const wsOptions = {
     ...settings,
     envVars: (processEnvVars ?? createDefaultProcessEnvVars(parameters))(
       envVars,
     ),
   };
-  return automation.LocalWorkspace.createOrSelectStack(
-    programArgs,
-    (processLocalWorkspaceOptions ?? defaultProcessLocalWorkspaceOptions)(
-      wsOptions,
-    ),
+  return (processLocalWorkspaceOptions ?? defaultProcessLocalWorkspaceOptions)(
+    wsOptions,
   );
 };
 
