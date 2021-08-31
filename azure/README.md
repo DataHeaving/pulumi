@@ -1,9 +1,9 @@
-# Data Heaving - Pulumi Automation
+# Data Heaving - Pulumi Azure
 [![Code Coverage](https://codecov.io/gh/DataHeaving/pulumi/branch/main/graph/badge.svg?flag=automation)](https://codecov.io/gh/DataHeaving/pulumi)
 
-This folder contains source code for `@data-heaving/pulumi-automation` NPM package.
+This folder contains source code for `@data-heaving/pulumi-azure` NPM package.
 The exported entities include:
-- Commonly used helper functions (e.g. `initPulumiExecution`) to easily install Pulumi plugins.
+- Commonly used helper functions (e.g. `getOrCreateStackWithAzureBackend`) to easily acquire Pulumi Stack which has all env variables and other settings correctly configured.
 
 # Usage
 Include `@data-heaving/pulumi-automation` dependency in your `package.json` file.

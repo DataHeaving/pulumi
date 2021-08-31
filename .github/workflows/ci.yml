@@ -11,15 +11,12 @@ on:
     - '!automation/README.md'
     - '!azure/README.md'
     # - '.codecov.yml'
-  push: # Run this pipeline also after merging to main, to report code coverage to codecov for this branch
-    branches:
-    - main
 
 jobs:
   build_and_test:
     strategy:
       matrix:
-        dir: [ automation ] # azure
+        dir: [ automation, azure ]
     runs-on: ubuntu-latest
     name: Build and test ${{ matrix.dir }}
     steps:
@@ -40,7 +37,7 @@ jobs:
           npm run build
 
           # We must invoke tests via Docker, as the tests are using Pulumi executables
-          cat Dockerfile | docker build --tag this_node -
+          cat ../Dockerfile | docker build --tag this_node -
           function npm()
           {
             docker run \
