@@ -1,5 +1,5 @@
 # Data Heaving - Pulumi
-[![Code Coverage](https://codecov.io/gh/DataHeaving/pulumi/branch/main/graph/badge.svg)](https://codecov.io/gh/DataHeaving/main)
+[![Code Coverage](https://codecov.io/gh/DataHeaving/pulumi/branch/main/graph/badge.svg)](https://codecov.io/gh/DataHeaving/pulumi)
 
 This repository is part of [Data Heaving project](https://github.com/DataHeaving).
 There are multiple packages in the repository, all of which are related to handling infrastructure of cloud data operations with Pulumi:
