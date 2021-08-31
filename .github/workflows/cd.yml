@@ -9,7 +9,7 @@ jobs:
   publish:
     strategy:
       matrix:
-        dir: [ ] # automation, azure
+        dir: [ automation ] # , azure
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
@@ -39,7 +39,18 @@ jobs:
 
           npm ci
           npm install --no-save @jsdevtools/npm-publish
-          ./node_modules/.bin/npm-publish --access public --token '${{ secrets.NPM_TOKEN }}'
+          # We must invoke tests via Docker, as the tests are using Pulumi executables
+          cat Dockerfile | docker build --tag this_node -
+          cd ..
+          docker run \
+            --rm \
+            --entrypoint sh \
+            -v "$(pwd)/:/code/:rw" \
+            -v "$(pwd)/_npm/${{ matrix.dir }}/:/root/.npm/:rw" \
+            --workdir '/code/${{ matrix.dir }}' \
+            this_node \
+            -c \
+            './node_modules/.bin/npm-publish --access public --token ${{ secrets.NPM_TOKEN }}'
 
           # TODO we must generate release notes for the package
           # TODO set up organization-wide CICD-GitHub account
