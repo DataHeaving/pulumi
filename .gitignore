@@ -1,0 +1,7 @@
+config.*.json
+dist
+node_modules
+.npmrc
+.vscode
+.nyc_output
+coverage

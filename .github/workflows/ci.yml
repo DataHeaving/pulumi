@@ -1,0 +1,69 @@
+name: CI Pipeline
+
+on:
+  pull_request:
+    branches:
+    - main
+    paths:
+    # Trigger only when there are changes to any code (as opposed to READMEs etc)
+    - 'automation/**'
+    - 'azure/**'
+    - '!automation/README.md'
+    - '!azure/README.md'
+    # - '.codecov.yml'
+  push: # Run this pipeline also after merging to main, to report code coverage to codecov for this branch
+    branches:
+    - main
+
+jobs:
+  build_and_test:
+    strategy:
+      matrix:
+        dir: [ ] # automation, azure
+    runs-on: ubuntu-latest
+    name: Build and test ${{ matrix.dir }}
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v2
+        with:
+          node-version: 14
+      - id: build
+        name: Build and test ${{ matrix.dir }}
+        shell: bash
+        run: |
+          set -e
+
+          cd ${{ matrix.dir }}
+          npm ci
+          npm run build
+
+          # # We must invoke tests via Docker, otherwise we will get an error claiming that port for another Docker container running in parallel is already allocated.
+          # # Not sure if this is GH or Docker bug, but nevertheless it is fixed by putting Node itself into Docker container when running tests.
+          # # It also looks like docker images built in other jobs are not preserved to this job - so we need to build Docker image + create network on every run
+          # echo 'FROM node:14-alpine3.13
+          #   RUN apk update \
+          #     && apk add --no-cache docker-cli \
+          #     && npm install -g npm' | docker build -t this_node -
+          # docker network create this_nw
+          # function npm()
+          # {
+          #   docker run \
+          #     --rm \
+          #     -v "$(pwd)/:/code/:rw" \
+          #     -v '/var/run/docker.sock:/var/run/docker.sock' \
+          #     --entrypoint npm \
+          #     -w /code \
+          #     --env MVM_CONTAINER_NW='this_nw' \
+          #     --env ASQ_DOCKER_NW='this_nw' \
+          #     --network this_nw \
+          #     this_node \
+          #     "$@"
+          # }
+          npm run test
+      - uses: codecov/codecov-action@v1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          flags: ${{ matrix.dir }}
+          directory: ${{ matrix.dir }}
