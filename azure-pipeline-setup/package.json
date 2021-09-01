@@ -28,6 +28,7 @@
     "@data-heaving/pulumi-azure-pipeline-config": "^1.0.0"
   },
   "devDependencies": {
+    "@data-heaving/common": "^1.0.0",
     "@data-heaving/pulumi-azure": "^1.0.1",
     "@data-heaving/pulumi-azure-pipeline-config": "^1.0.0",
     "@pulumi/azure-native": "1.24.0",
