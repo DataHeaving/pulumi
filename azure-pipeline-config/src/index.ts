@@ -1,6 +1,8 @@
 import * as pulumiAzure from "@data-heaving/pulumi-azure";
 
-// The secret contents for env-specific pipeline config will contain JSON-stringified objects of this type
+/**
+ * This type describes the contents of the data stored by `@data-heaving/azure-pipeline-setup` package to key vault.
+ */
 export interface PipelineConfig {
   backend: pulumiAzure.PulumiAzureBackendConfig;
   azure: pulumiAzure.AzureCloudInformationFull;

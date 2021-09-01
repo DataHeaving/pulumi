@@ -11,7 +11,7 @@ on:
     - 'azure-pipeline-config/**'
     - '!automation/README.md'
     - '!azure/README.md'
-    - '!azure-pipeline-config/**'
+    - '!azure-pipeline-config/README.md'
     # - '.codecov.yml'
 
 jobs:
