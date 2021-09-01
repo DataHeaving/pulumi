@@ -3,6 +3,7 @@ import * as graph from "@microsoft/microsoft-graph-client";
 import { TokenCredentialAuthenticationProvider } from "@microsoft/microsoft-graph-client/authProviders/azureTokenCredentials";
 import * as id from "@azure/identity";
 import * as utils from "@data-heaving/common";
+import * as pulumi from "@data-heaving/pulumi-azure-pipeline-setup";
 import * as fs from "fs/promises";
 import * as t from "io-ts";
 import * as validation from "@data-heaving/common-validation";
@@ -11,7 +12,6 @@ import * as ad from "./ad";
 import * as auth from "./auth";
 import * as pulumiSetup from "./pulumi";
 import * as certs from "./certs";
-import * as pulumi from "../pulumi";
 
 export interface Inputs {
   credentials: id.TokenCredential;
