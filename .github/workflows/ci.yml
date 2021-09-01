@@ -9,16 +9,20 @@ on:
     - 'automation/**'
     - 'azure/**'
     - 'azure-pipeline-config/**'
+    - 'azure-pipeline-setup/**'
     - '!automation/README.md'
     - '!azure/README.md'
     - '!azure-pipeline-config/README.md'
+    - '!azure-pipeline-setup/README.md'
     # - '.codecov.yml'
-
+  push: # Run this pipeline also after merging to main, to report code coverage to codecov for this branch
+    branches:
+    - main
 jobs:
   build_and_test:
     strategy:
       matrix:
-        dir: [ automation, azure, azure-pipeline-config ]
+        dir: [ automation, azure, azure-pipeline-config, azure-pipeline-setup ]
     runs-on: ubuntu-latest
     name: Build and test ${{ matrix.dir }}
     steps:
