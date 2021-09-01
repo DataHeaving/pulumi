@@ -31,7 +31,7 @@
     "@azure/keyvault-keys": "^4.3.0",
     "@data-heaving/azure-kv-secret": "^1.0.0",
     "@data-heaving/common-validation": "^1.0.0",
-    "@data-heaving/pulumi-azure-pipeline-setup": "^1.0.0",
+    "@data-heaving/pulumi-azure-pipeline-setup": "^1.0.1",
     "@microsoft/microsoft-graph-client": "^3.0.0",
     "cross-fetch": "^3.1.4"
   },
@@ -43,7 +43,7 @@
     "@data-heaving/common-validation": "^1.0.0",
     "@data-heaving/pulumi-azure": "^1.0.1",
     "@data-heaving/pulumi-azure-pipeline-config": "^1.0.0",
-    "@data-heaving/pulumi-azure-pipeline-setup": "^1.0.0",
+    "@data-heaving/pulumi-azure-pipeline-setup": "^1.0.1",
     "@microsoft/microsoft-graph-client": "^3.0.0",
     "@pulumi/azure-native": "1.24.0",
     "@pulumi/azuread": "^4.3.0",

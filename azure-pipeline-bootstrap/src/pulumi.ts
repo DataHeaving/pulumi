@@ -19,17 +19,12 @@ export interface Inputs {
   principalId: string;
   organization: OrganizationInfo;
   spAuthStorageConfig: SPAuthStorageConfig | undefined;
-  bootstrapperPipelineConfig: PulumiPipelineConfig;
+  pulumiEncryptionKeyBits: number;
 }
 
-USE ORG FROM APS
 export interface OrganizationInfo {
   name: string;
   location: string;
-}
-
-export interface PulumiPipelineConfig {
-  encryptionKeyBits: number;
 }
 
 export interface SPAuthStorageConfig {
@@ -38,18 +33,16 @@ export interface SPAuthStorageConfig {
   configReaderPrincipalId: string;
 }
 
-export const ensureRequireCloudResourcesForPulumiStateExist = async ({
-  credentials,
-  azure,
-  organization,
-  ...inputs
-}: Inputs): Promise<{
+export const ensureRequireCloudResourcesForPulumiStateExist = async (
+  inputs: Inputs,
+): Promise<{
   cicdRGName: string;
   kvName: string;
   backendConfig: pulumiAzure.PulumiAzureBackendConfig;
   backendStorageAccountKey: string;
 }> => {
-  const clientArgs = [credentials, azure.subscriptionId] as const;
+  const { organization } = inputs;
+  const clientArgs = [inputs.credentials, inputs.azure.subscriptionId] as const;
   // Upsert resource group
   const cicdRGName = await ensureResourceGroupExists(clientArgs, organization);
 
@@ -57,7 +50,7 @@ export const ensureRequireCloudResourcesForPulumiStateExist = async ({
   const [{ kv, key }, storageAccountInfo] = await Promise.all([
     ensureKeyVaultIsConfigured(
       clientArgs,
-      { organization, azure, ...inputs },
+      inputs,
       cicdRGName,
       storageContainerName,
     ),
@@ -146,15 +139,8 @@ const ensureKeyVaultIsConfigured = async (
     azure: { tenantId },
     principalId,
     spAuthStorageConfig,
-    bootstrapperPipelineConfig,
-  }: Pick<
-    Inputs,
-    | "organization"
-    | "azure"
-    | "principalId"
-    | "spAuthStorageConfig"
-    | "bootstrapperPipelineConfig"
-  >,
+    pulumiEncryptionKeyBits,
+  }: Inputs,
   rgName: string,
   keyName: string,
 ) => {
@@ -196,7 +182,7 @@ const ensureKeyVaultIsConfigured = async (
   );
   if (!key) {
     key = await keyClient.createRsaKey(keyName, {
-      keySize: bootstrapperPipelineConfig.encryptionKeyBits,
+      keySize: pulumiEncryptionKeyBits,
     });
   }
   // Store key + cert pem, if specified

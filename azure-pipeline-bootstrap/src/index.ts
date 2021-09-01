@@ -18,12 +18,10 @@ export interface Inputs {
   bootstrapperApp: BootstrapperAppSP | BootstrapperAppMSI;
   azure: pulumiAzure.AzureCloudInformationFull;
   organization: pulumiSetup.OrganizationInfo;
-  bootstrapperPipelineConfig: pulumiSetup.PulumiPipelineConfig;
+  pulumiEncryptionKeyBits: number;
 }
 
 export type BootstrapperApp = BootstrapperAppSP | BootstrapperAppMSI;
-
-export type PulumiPipelineConfig = pulumiSetup.PulumiPipelineConfig;
 
 export type OrganizationInfo = pulumiSetup.OrganizationInfo;
 
@@ -174,7 +172,7 @@ const setupBootstrapperApp = async ({
 };
 
 const runWithBootstrapper = async (
-  { azure, organization, bootstrapperPipelineConfig }: Inputs,
+  { azure, organization, pulumiEncryptionKeyBits }: Inputs,
   {
     bootstrapperCredentials,
     principalId,
@@ -188,7 +186,7 @@ const runWithBootstrapper = async (
     organization,
     principalId,
     spAuthStorageConfig,
-    bootstrapperPipelineConfig,
+    pulumiEncryptionKeyBits,
   });
 };
 
