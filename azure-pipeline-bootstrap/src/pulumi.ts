@@ -4,11 +4,11 @@ import * as resources from "@azure/arm-resources";
 import * as storage from "@azure/arm-storage";
 import * as kv from "@azure/arm-keyvault-profile-2020-09-01-hybrid";
 import * as secrets from "@azure/keyvault-secrets";
+import * as keys from "@azure/keyvault-keys";
 import {
   getSecretValue,
   SecretDoesNotExistError,
 } from "@data-heaving/azure-kv-secret";
-import * as keys from "@azure/keyvault-keys";
 import * as utils from "@data-heaving/common";
 import * as pulumiAzure from "@data-heaving/pulumi-azure";
 import * as common from "./common";
