@@ -3,69 +3,25 @@ import * as azureProvider from "@pulumi/azure-native/provider";
 import * as arm from "./resources-arm";
 import * as ad from "./resources-ad";
 import * as utils from "@data-heaving/common";
+import * as types from "./types";
 
-export type Inputs = {
-  organization: OrganizationInfo;
-  pulumiPipelineConfig: {
-    auth: PulumiPipelineAuthInfoMSI | PulumiPipelineAuthInfoSP;
-    encryptionKeyBits: number;
-  };
-} & Omit<
-  arm.Inputs,
-  | "envName"
-  | "principalId"
-  | "pulumiPipelineAuthInfo"
-  | "organization"
-  | "pulumiOpts"
-  | "pulumiPipelineConfig"
-> &
-  Omit<ad.Inputs, "envName" | "certificateConfig" | "organization">;
-
-export type OrganizationInfo = utils.MakeOptional<
-  arm.OrganizationInfo,
-  "location"
-> &
-  OrganizationEnvironments;
-
-export interface OrganizationEnvironments {
-  environments: ReadonlyArray<{
-    name: string; // Array will be deduplicated case-insensitively by this property
-    subscriptionId: string;
-    location?: string;
-  }>;
-}
-export type Outputs = {
-  authInfo: AuthInfoSP | AuthInfoMSI;
-};
-
-export interface AuthInfoSP {
-  type: "sp";
-  keyPEM: pulumi.Output<string>;
-  certPEM: pulumi.Output<string>;
-  clientId: pulumi.Output<string>;
+export interface Inputs {
+  organization: types.OrganizationInfo;
+  pulumiPipelineConfig: PulumiPipelineConfig;
+  envSpecificPipelineConfigReader: types.EnvSpecificPipelineConfigReader;
 }
 
-export interface AuthInfoMSI {
-  type: "msi";
-  resourceID: pulumi.Output<string>;
-  clientId: pulumi.Output<string>;
+/**
+ * Key: env name.
+ * Value: env-specific setup information.
+ */
+export type Outputs = Record<string, EnvironmentSetupOutput>;
+
+export interface EnvironmentSetupOutput {
+  configSecretURI: pulumi.Output<string>;
 }
 
-export type SPCertificateInfo = ad.SPCertificateInfo;
-
-export type EnvSpecificPipelineConfigReader =
-  arm.EnvSpecificPipelineConfigReader;
-
-export type PulumiPipeline = arm.PulumiPipeline;
-
-type PulumiPipelineAuthInfoMSI = arm.PulumiPipelineAuthInfoMSI;
-type PulumiPipelineAuthInfoSP = Omit<
-  arm.PulumiPipelineAuthInfoSP,
-  "principalId" | "clientId" | "keyPEM" | "certPEM"
-> & {
-  certificateConfig: ad.SPCertificateInfo;
-};
-export const pulumiProgram = async (inputs: Inputs) => {
+export const pulumiProgram = async (inputs: Inputs): Promise<Outputs> => {
   const envs = utils.deduplicate(inputs.organization.environments, ({ name }) =>
     name.toLowerCase(),
   );
@@ -78,8 +34,7 @@ export const pulumiProgram = async (inputs: Inputs) => {
     await Promise.all(
       envs.map((envConfig) => createResourcesForSingleEnv(inputs, envConfig)),
     )
-  ).reduce<Record<string, unknown>>((perEnvOutputs, currentOutput, idx) => {
-    // TODO put to KV
+  ).reduce<Outputs>((perEnvOutputs, currentOutput, idx) => {
     const { name } = envs[idx];
     perEnvOutputs[name] = {
       configSecretURI: currentOutput.armInfo.pipelineConfigSecretURI,
@@ -90,13 +45,9 @@ export const pulumiProgram = async (inputs: Inputs) => {
 
 const createResourcesForSingleEnv = async (
   inputs: Omit<Inputs, "environments">,
-  {
-    name: envName,
-    subscriptionId,
-    location,
-  }: OrganizationInfo["environments"][number],
+  { name: envName, subscriptionId, location }: types.OrganizationEnvironment,
 ) => {
-  const { auth } = inputs.pulumiPipelineConfig;
+  const { auth, ...pulumiPipelineConfig } = inputs.pulumiPipelineConfig;
   const envInputs = { ...inputs, envName };
   const { name: orgName } = inputs.organization;
   let authInfo: AuthInfoSP | AuthInfoMSI | undefined = undefined;
@@ -139,7 +90,7 @@ const createResourcesForSingleEnv = async (
       location: envLocation,
     },
     pulumiPipelineConfig: {
-      ...envInputs.pulumiPipelineConfig,
+      ...pulumiPipelineConfig,
       auth: pulumiPipelineAuthInfoArm,
     },
     pulumiOpts: {
@@ -164,3 +115,31 @@ const createResourcesForSingleEnv = async (
 };
 
 export default pulumiProgram;
+
+export type PulumiPipelineConfig =
+  types.PulumiPipelineConfig<PulumiPipelineAuthInfo>;
+
+export type PulumiPipelineAuthInfo =
+  | PulumiPipelineAuthInfoMSI
+  | PulumiPipelineAuthInfoSP;
+
+type PulumiPipelineAuthInfoMSI = arm.PulumiPipelineAuthInfoMSI;
+type PulumiPipelineAuthInfoSP = {
+  type: "sp";
+  certificateConfig: ad.SPCertificateInfo;
+};
+
+export type SPCertificateInfo = ad.SPCertificateInfo;
+
+interface AuthInfoSP {
+  type: "sp";
+  keyPEM: pulumi.Output<string>;
+  certPEM: pulumi.Output<string>;
+  clientId: pulumi.Output<string>;
+}
+
+interface AuthInfoMSI {
+  type: "msi";
+  resourceID: pulumi.Output<string>;
+  clientId: pulumi.Output<string>;
+}

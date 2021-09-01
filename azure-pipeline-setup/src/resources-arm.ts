@@ -5,38 +5,26 @@ import * as msi from "@pulumi/azure-native/managedidentity";
 import * as storage from "@pulumi/azure-native/storage";
 import * as kv from "@pulumi/azure-native/keyvault";
 import * as utils from "@data-heaving/common";
-import * as interop from "./interop";
+import * as config from "@data-heaving/pulumi-azure-pipeline-config";
+import * as types from "./types";
 
 export interface Inputs {
   organization: OrganizationInfo;
   envName: string;
-  pulumiKVInfo: {
-    rgName: string;
-    name: string;
-    keyNamePrefix: string;
-    secretNamePrefix: string;
-  };
-  envSpecificPipelineConfigReader: EnvSpecificPipelineConfigReader;
-  pulumiPipelineConfig: PulumiPipeline;
+  envSpecificPipelineConfigReader: types.EnvSpecificPipelineConfigReader;
+  pulumiPipelineConfig: types.PulumiPipelineConfig<PulumiPipelineAuthInfo>;
   pulumiOpts: {
     provider: pulumi.ProviderResource;
   };
-}
-
-export interface PulumiPipeline {
-  auth: PulumiPipelineAuthInfoSP | PulumiPipelineAuthInfoMSI;
-  encryptionKeyBits: number;
-}
-
-export interface EnvSpecificPipelineConfigReader {
-  principalId: string;
-  principalType: string;
 }
 
 export interface OrganizationInfo {
   name: string;
   location: string;
 }
+export type PulumiPipelineAuthInfo =
+  | PulumiPipelineAuthInfoSP
+  | PulumiPipelineAuthInfoMSI;
 
 export interface PulumiPipelineAuthInfoSP {
   type: "sp";
@@ -110,9 +98,8 @@ const createWebsiteRG = async (
 const createCICDRG = async ({
   organization: { name: organization, location },
   envName,
-  pulumiKVInfo,
   envSpecificPipelineConfigReader,
-  pulumiPipelineConfig: { auth, encryptionKeyBits },
+  pulumiPipelineConfig: { auth, pulumiKVInfo },
   pulumiOpts,
 }: Inputs) => {
   const resID = `${envName}-cicd`;
@@ -259,7 +246,7 @@ const createCICDRG = async ({
       keyName: `${pulumiKVInfo.keyNamePrefix}${envName}`,
       properties: {
         kty: kv.JsonWebKeyType.RSA,
-        keySize: encryptionKeyBits,
+        keySize: pulumiKVInfo.encryptionKeyBits,
       },
     },
     pulumiOpts,
@@ -387,7 +374,7 @@ const constructPipelineConfigString = (
   storageAccountKey: string | undefined,
   msiResID: string | undefined,
 ) => {
-  const retVal: interop.PipelineConfig = {
+  const retVal: config.PipelineConfig = {
     backend: {
       storageAccountName,
       storageContainerName,
