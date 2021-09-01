@@ -16,7 +16,7 @@ jobs:
   build_and_test:
     strategy:
       matrix:
-        dir: [ automation, azure ]
+        dir: [ automation, azure, azure-pipeline-config ]
     runs-on: ubuntu-latest
     name: Build and test ${{ matrix.dir }}
     steps:
