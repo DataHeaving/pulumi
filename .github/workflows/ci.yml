@@ -8,8 +8,10 @@ on:
     # Trigger only when there are changes to any code (as opposed to READMEs etc)
     - 'automation/**'
     - 'azure/**'
+    - 'azure-pipeline-config/**'
     - '!automation/README.md'
     - '!azure/README.md'
+    - '!azure-pipeline-config/**'
     # - '.codecov.yml'
 
 jobs:
