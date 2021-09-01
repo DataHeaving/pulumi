@@ -5,6 +5,8 @@ import * as ad from "./resources-ad";
 import * as utils from "@data-heaving/common";
 import * as types from "./types";
 
+export * from "./types";
+
 export interface Inputs {
   organization: types.OrganizationInfo;
   pulumiPipelineConfig: PulumiPipelineConfig;
