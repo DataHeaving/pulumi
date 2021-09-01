@@ -22,6 +22,7 @@ export interface Inputs {
   bootstrapperPipelineConfig: PulumiPipelineConfig;
 }
 
+USE ORG FROM APS
 export interface OrganizationInfo {
   name: string;
   location: string;
