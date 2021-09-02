@@ -5,26 +5,41 @@ import * as config from "@data-heaving/pulumi-azure-pipeline-config";
 import * as fs from "fs/promises";
 import * as authUtils from "./auth";
 
-export const runPulumiCommandFromConfig = async <
+export interface RunFromConfigOptions<
   TCommand extends pulumiAutomation.PulumiCommand,
->(
-  config: config.PipelineConfig,
-  plugins: ReadonlyArray<pulumiAutomation.PulumiPluginDescription>,
-  command: TCommand,
-  programConfig: pulumi.InlineProgramArgs,
-  skipDeletePfxPathIfCreated = false,
-) => {
+> {
+  config: config.PipelineConfig;
+  plugins: ReadonlyArray<pulumiAutomation.PulumiPluginDescription>;
+  command: TCommand;
+  programConfig: pulumi.InlineProgramArgs;
+  additionalParameters?: Partial<
+    {
+      skipDeletePfxPathIfCreated: boolean;
+    } & Omit<
+      pulumiAzure.PulumiAzureBackendStackAcquiringConfig["pulumi"],
+      "auth" | "backendConfig" | "programArgs"
+    >
+  >;
+}
+
+export const runPulumiPipelineFromConfig = async <
+  TCommand extends pulumiAutomation.PulumiCommand,
+>({
+  config,
+  plugins,
+  command,
+  programConfig,
+  additionalParameters,
+}: RunFromConfigOptions<TCommand>) => {
   const { auth, pfx } = await authUtils.configAuthToPulumiAuth(config.auth);
   try {
-    return await runPulumiCommand(
+    return await runPulumiPipeline(
       {
         pulumi: {
+          ...(additionalParameters || {}),
           auth,
           backendConfig: config.backend,
           programArgs: programConfig,
-          // TODO allow customization of these two
-          // processEnvVars,
-          // processLocalWorkspaceOptions
         },
         azure: config.azure,
       },
@@ -32,12 +47,13 @@ export const runPulumiCommandFromConfig = async <
       command,
     );
   } finally {
-    if (pfx && !(skipDeletePfxPathIfCreated === true)) {
+    if (pfx && !(additionalParameters?.skipDeletePfxPathIfCreated === true)) {
       await fs.rm(pfx.path);
     }
   }
 };
-export const runPulumiCommand = async <
+
+export const runPulumiPipeline = async <
   TCommand extends pulumiAutomation.PulumiCommand,
 >(
   stackArgs: pulumiAzure.PulumiAzureBackendStackAcquiringConfig,
@@ -52,8 +68,8 @@ export const runPulumiCommand = async <
     stack,
     plugins,
   );
-
-  return await pulumiAutomation.runPulumiInfrastructureCommandForStack(
+  // There is some weird TS compiler bug causing return type of this function to become Promise<PreviewResult|DestroyResult>, unless we explicitly specify generic argument here.
+  return await pulumiAutomation.runPulumiInfrastructureCommandForStack<pulumiAutomation.PulumiCommand>(
     pulumiAutomation
       .consoleLoggingRunEventEmitterBuilder()
       .createEventEmitter(),

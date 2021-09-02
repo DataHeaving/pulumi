@@ -16,6 +16,7 @@ export interface Inputs {
   pulumiOpts: {
     provider: pulumi.ProviderResource;
   };
+  targetResources: types.TargetResourcesConfig;
 }
 
 export interface OrganizationInfo {
@@ -42,14 +43,15 @@ export interface PulumiPipelineAuthInfoMSI {
 }
 const createResourcesForSingleEnv = async (inputs: Inputs) => {
   const cicdInfo = await createCICDRG(inputs);
-  await createWebsiteRG(inputs, cicdInfo);
+  await createManagedRG(inputs, cicdInfo);
   return cicdInfo;
 };
 
-const createWebsiteRG = async (
+const createManagedRG = async (
   {
     organization: { name: organization, location },
     envName,
+    targetResources: { cicdRGSuffix, targetRGSuffix },
     pulumiOpts,
   }: Inputs,
   {
@@ -57,34 +59,37 @@ const createWebsiteRG = async (
     principalType,
   }: utils.DePromisify<ReturnType<typeof createCICDRG>>,
 ) => {
-  const resID = `${envName}-site`;
-  // RG to hold website resources
-  // Will be managed by separate Pulumi pipeline running with given SP principal
-  const rg = new resources.ResourceGroup(
-    resID,
-    {
-      resourceGroupName: `${organization}-${envName}-site`,
-      location,
-    },
-    pulumiOpts,
-  );
+  const resID = `${envName}-managed`;
+  // RG to hold resources managed by target Pulumi pipeline
+  let rg: resources.ResourceGroup | undefined;
+  if (targetRGSuffix !== undefined) {
+    rg = new resources.ResourceGroup(
+      resID,
+      {
+        resourceGroupName: `${organization}-${envName}-managed-${
+          targetRGSuffix.length > 0 ? targetRGSuffix : cicdRGSuffix
+        }`,
+        location,
+      },
+      pulumiOpts,
+    );
+  }
 
+  const subID = `/subscriptions/${
+    (await authorization.getClientConfig(pulumiOpts)).subscriptionId
+  }`;
   // Make the Pulumi pipeline able to do anything within RG
   new authorization.RoleAssignment(
     resID,
     {
       principalId,
-      scope: rg.id,
+      scope: rg?.id ?? subID,
       roleDefinitionId: (
         await authorization.getRoleDefinition(
           {
             // From https://docs.microsoft.com/en-us/azure/role-based-access-control/built-in-roles
             roleDefinitionId: "8e3af657-a8ff-443c-a75c-2fe8c4bcb635", // "Owner",
-            scope: `/subscriptions/${
-              (
-                await authorization.getClientConfig(pulumiOpts)
-              ).subscriptionId
-            }`,
+            scope: subID,
           },
           pulumiOpts,
         )
@@ -100,6 +105,7 @@ const createCICDRG = async ({
   envName,
   envSpecificPipelineConfigReader,
   pulumiPipelineConfig: { auth, pulumiKVInfo },
+  targetResources: { cicdRGSuffix },
   pulumiOpts,
 }: Inputs) => {
   const resID = `${envName}-cicd`;
@@ -128,7 +134,7 @@ const createCICDRG = async ({
       resID,
       {
         resourceGroupName: rg.name,
-        resourceName: `${organization}-${envName}-cicd`,
+        resourceName: `${organization}-${envName}-cicd-${cicdRGSuffix}`,
       },
       pulumiOpts,
     );
@@ -261,7 +267,7 @@ const createCICDRG = async ({
         await authorization.getRoleDefinition(
           {
             // From https://docs.microsoft.com/en-us/azure/role-based-access-control/built-in-roles
-            roleDefinitionId: "e147488a-f6f5-4113-8e2d-b22465e65bf6", // "Key Vault Crypto Service Encryption User",
+            roleDefinitionId: "12338af0-0e69-4776-bea7-57ae8d297424", // "Key Vault Crypto User",
             scope: subScope,
           },
           pulumiOpts,
