@@ -114,29 +114,31 @@ const pulumiProgram = (): Promise<void> => {
   throw new Error("This should never be called");
 };
 type EventTracker = {
-  [E in keyof spec.VirtualEvents]: Array<{
+  [E in keyof spec.VirtualInitEvents]: Array<{
     chronologicalIndex: number;
-    eventArg: spec.VirtualEvents[E];
+    eventArg: spec.VirtualInitEvents[E];
   }>;
 };
 
 type CustomEventHandlers = Partial<
   {
-    [E in keyof spec.VirtualEvents]: common.EventHandler<spec.VirtualEvents[E]>;
+    [E in keyof spec.VirtualInitEvents]: common.EventHandler<
+      spec.VirtualInitEvents[E]
+    >;
   }
 >;
 
 const createEventEmitterAndRecorder = (
   customEventHandlers: CustomEventHandlers = {},
 ) => {
-  const eventBuilder = spec.createEventEmitterBuilder();
+  const eventBuilder = spec.createInitEventEmitterBuilder();
   let chronologicalIndex = 0;
   const eventTracker: EventTracker = {
     pluginInstalled: [],
     pluginInstallationError: [],
   };
   for (const evtName of Object.keys(eventTracker)) {
-    const eventName = evtName as keyof spec.VirtualEvents;
+    const eventName = evtName as keyof spec.VirtualInitEvents;
     eventBuilder.addEventListener(eventName, (eventArg) => {
       eventTracker[eventName].push({
         chronologicalIndex,
@@ -148,7 +150,9 @@ const createEventEmitterAndRecorder = (
     if (handler) {
       eventBuilder.addEventListener(
         eventName,
-        handler as common.EventHandler<spec.VirtualEvents[typeof eventName]>,
+        handler as common.EventHandler<
+          spec.VirtualInitEvents[typeof eventName]
+        >,
       );
     }
   }
