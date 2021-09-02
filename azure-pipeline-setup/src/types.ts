@@ -35,3 +35,8 @@ export interface SPCertificateInfo {
   validityHours: number;
   subject: tls.types.input.SelfSignedCertSubject;
 }
+
+export interface TargetResourcesConfig {
+  cicdRGSuffix: string;
+  targetRGSuffix: string | undefined; // undefined = target is subscription, empty string = same as cicdRGSuffix
+}

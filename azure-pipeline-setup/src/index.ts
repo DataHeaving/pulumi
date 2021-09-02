@@ -11,6 +11,7 @@ export interface Inputs {
   organization: types.OrganizationInfo;
   pulumiPipelineConfig: PulumiPipelineConfig;
   envSpecificPipelineConfigReader: types.EnvSpecificPipelineConfigReader;
+  targetResources: types.TargetResourcesConfig;
 }
 
 /**
