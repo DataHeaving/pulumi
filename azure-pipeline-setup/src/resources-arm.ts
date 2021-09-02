@@ -51,7 +51,7 @@ const createManagedRG = async (
   {
     organization: { name: organization, location },
     envName,
-    targetResources: { cicdRGSuffix, targetRGSuffix },
+    targetResources: { cicdRGSuffix, targetRGSuffix, skipTargetRoleAssignment },
     pulumiOpts,
   }: Inputs,
   {
@@ -75,29 +75,31 @@ const createManagedRG = async (
     );
   }
 
-  const subID = `/subscriptions/${
-    (await authorization.getClientConfig(pulumiOpts)).subscriptionId
-  }`;
-  // Make the Pulumi pipeline able to do anything within RG
-  new authorization.RoleAssignment(
-    resID,
-    {
-      principalId,
-      scope: rg?.id ?? subID,
-      roleDefinitionId: (
-        await authorization.getRoleDefinition(
-          {
-            // From https://docs.microsoft.com/en-us/azure/role-based-access-control/built-in-roles
-            roleDefinitionId: "8e3af657-a8ff-443c-a75c-2fe8c4bcb635", // "Owner",
-            scope: subID,
-          },
-          pulumiOpts,
-        )
-      ).id,
-      principalType,
-    },
-    pulumiOpts,
-  );
+  if (!(skipTargetRoleAssignment === true)) {
+    const subID = `/subscriptions/${
+      (await authorization.getClientConfig(pulumiOpts)).subscriptionId
+    }`;
+    // Make the Pulumi pipeline able to do anything within RG
+    new authorization.RoleAssignment(
+      resID,
+      {
+        principalId,
+        scope: rg?.id ?? subID,
+        roleDefinitionId: (
+          await authorization.getRoleDefinition(
+            {
+              // From https://docs.microsoft.com/en-us/azure/role-based-access-control/built-in-roles
+              roleDefinitionId: "8e3af657-a8ff-443c-a75c-2fe8c4bcb635", // "Owner",
+              scope: subID,
+            },
+            pulumiOpts,
+          )
+        ).id,
+        principalType,
+      },
+      pulumiOpts,
+    );
+  }
 };
 
 const createCICDRG = async ({

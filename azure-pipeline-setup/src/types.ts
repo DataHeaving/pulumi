@@ -37,6 +37,18 @@ export interface SPCertificateInfo {
 }
 
 export interface TargetResourcesConfig {
+  /**
+   * Suffix of RG holding CICD resources (storage acco, etc).
+   */
   cicdRGSuffix: string;
-  targetRGSuffix: string | undefined; // undefined = target is subscription, empty string = same as cicdRGSuffix
+  /**
+   * If this is undefined, the Owner role assignment target is subscription.
+   * If this is empty string, then the target is cicd RG.
+   */
+  targetRGSuffix?: string;
+
+  /**
+   * If this is set to true, the "Owner" role assignment to target sub/RG is skipped.
+   */
+  skipTargetRoleAssignment?: boolean;
 }

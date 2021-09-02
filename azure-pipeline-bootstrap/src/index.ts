@@ -84,6 +84,11 @@ export const main = async ({
                     .pulumiEncryptionKeyBitsForEnvSpecificPipeline,
               },
             },
+            targetResources: {
+              cicdRGSuffix: "bootstrap",
+              targetRGSuffix: undefined, // No target RG creation
+              //skipTargetRoleAssignment: true, // No "Owner" role assignment to subscription (as we already did it in bootstrap.default)
+            },
           }),
       },
     },
