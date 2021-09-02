@@ -3,7 +3,7 @@ import * as types from "./types";
 import * as errors from "./errors";
 
 // This is virtual interface - no instances implementing this are ever created
-export interface VirtualEvents {
+export interface VirtualInitEvents {
   pluginInstalled: {
     pluginInfo: types.PulumiPluginPackageInformationFull;
     version: string;
@@ -11,18 +11,18 @@ export interface VirtualEvents {
   pluginInstallationError: errors.PulumiPluginInstallationError;
 }
 
-export type EventEmitter = common.EventEmitter<VirtualEvents>;
+export type InitEventEmitter = common.EventEmitter<VirtualInitEvents>;
 
-export const createEventEmitterBuilder = () =>
-  new common.EventEmitterBuilder<VirtualEvents>();
+export const createInitEventEmitterBuilder = () =>
+  new common.EventEmitterBuilder<VirtualInitEvents>();
 
-export const consoleLoggingEventEmitterBuilder = (
+export const consoleLoggingInitEventEmitterBuilder = (
   logMessagePrefix?: Parameters<typeof common.createConsoleLogger>[0],
-  builder?: common.EventEmitterBuilder<VirtualEvents>,
+  builder?: common.EventEmitterBuilder<VirtualInitEvents>,
   consoleAbstraction?: common.ConsoleAbstraction,
 ) => {
   if (!builder) {
-    builder = createEventEmitterBuilder();
+    builder = createInitEventEmitterBuilder();
   }
 
   const logger = common.createConsoleLogger(

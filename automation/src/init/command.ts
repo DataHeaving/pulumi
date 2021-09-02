@@ -8,7 +8,7 @@ export type PulumiPluginDescription =
   | types.PulumiPluginPackageInformation;
 
 export const initPulumiExecution = async (
-  eventEmitter: events.EventEmitter,
+  eventEmitter: events.InitEventEmitter,
   stack: pulumi.Stack,
   plugins: ReadonlyArray<PulumiPluginDescription>,
 ) => {
