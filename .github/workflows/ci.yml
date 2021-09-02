@@ -8,10 +8,12 @@ on:
     # Trigger only when there are changes to any code (as opposed to READMEs etc)
     - 'automation/**'
     - 'azure/**'
+    - 'azure-pipeline/**'
     - 'azure-pipeline-config/**'
     - 'azure-pipeline-setup/**'
     - '!automation/README.md'
     - '!azure/README.md'
+    - '!azure-pipeline/README.md'
     - '!azure-pipeline-config/README.md'
     - '!azure-pipeline-setup/README.md'
     # - '.codecov.yml'
@@ -22,7 +24,7 @@ jobs:
   build_and_test:
     strategy:
       matrix:
-        dir: [ automation, azure, azure-pipeline-config, azure-pipeline-setup ]
+        dir: [ automation, azure, azure-pipeline azure-pipeline-config, azure-pipeline-setup ]
     runs-on: ubuntu-latest
     name: Build and test ${{ matrix.dir }}
     steps:
