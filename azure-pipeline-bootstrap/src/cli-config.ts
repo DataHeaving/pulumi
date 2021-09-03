@@ -15,18 +15,14 @@ export const authenticationKinds = t.array(
   "AuthenticationKindList",
 );
 
-const pulumiPipelineConfig = t.union(
+const pipelineEncryptionKeyBits = t.union(
   [t.number, t.null],
   "PulumiPipelineConfig",
 );
-// t.partial(
-//   {
-//     encryptionKeyBits: t.Integer,
-//   },
-//   "PulumiPipelineConfig",
-// );
 
-export type PulumiPipelineConfig = t.TypeOf<typeof pulumiPipelineConfig>;
+export type PulumiPipelineEncryptionKeyBits = t.TypeOf<
+  typeof pipelineEncryptionKeyBits
+>;
 
 const organization = t.type(
   {
@@ -41,13 +37,13 @@ const organization = t.type(
               t.type(
                 {
                   name: t.string,
-                  subscriptionId: validation.uuid,
                 },
                 "EnvironmentInfoMandatory",
               ),
               t.partial(
                 {
                   location: validation.nonEmptyString,
+                  subscriptionId: validation.uuid,
                 },
                 "EnvironmentInfoOptional",
               ),
@@ -164,8 +160,9 @@ export const config = t.intersection(
     t.partial(
       {
         pulumi: t.partial({
-          pulumiEncryptionKeyBitsForBootstrapper: pulumiPipelineConfig,
-          pulumiEncryptionKeyBitsForEnvSpecificPipeline: pulumiPipelineConfig,
+          pulumiEncryptionKeyBitsForBootstrapper: pipelineEncryptionKeyBits,
+          pulumiEncryptionKeyBitsForEnvSpecificPipeline:
+            pipelineEncryptionKeyBits,
         }),
       },
       "BootstrapConfigOptional",

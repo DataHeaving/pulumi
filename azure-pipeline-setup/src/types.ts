@@ -2,12 +2,19 @@ import * as tls from "@pulumi/tls";
 
 export type OrganizationInfo = {
   name: string;
+  /**
+   * Fallback location if not specified in environment
+   */
   location?: string;
   environments: ReadonlyArray<OrganizationEnvironment>;
 };
 
 export interface OrganizationEnvironment {
-  name: string; // Array will be deduplicated case-insensitively by this property
+  /**
+   * The `environments` array of @type {OrganizationInfo} will be deduplicated case-insensitively by this property.
+   * If any duplicates are noticed, an error will be raised.
+   */
+  name: string;
   subscriptionId: string;
   location?: string;
 }

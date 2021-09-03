@@ -1,11 +1,12 @@
 import * as id from "@azure/identity";
 import * as utils from "@data-heaving/common";
 import * as validation from "@data-heaving/common-validation";
-import { argv, env } from "process";
+import { argv, env, stdin } from "process";
 import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import * as uuid from "uuid";
+import { Readable } from "stream";
 import * as cmdConfig from "./cli-config";
 import * as program from ".";
 import * as pulumiSetup from "./bootstrap";
@@ -15,7 +16,7 @@ import * as pulumiSetup from "./bootstrap";
 const main = async () => {
   // Perform parsing arguments
   // We must do it sequentially in this order, as getDoChanges and getConfigPath may modify arg array
-  const args = argv.slice(2); // First two are: "ts-node" and "src/commandline"
+  const args = argv.slice(2); // First two are: "(ts-)node" and "src/commandline"
   const doChanges = getDoChanges(args);
   const configPath = getConfigPath(args);
   const authentications = validation.decodeOrThrow(
@@ -58,6 +59,18 @@ const main = async () => {
   }
 };
 
+const readStream = async (stream: Readable) => {
+  const chunks: Array<Buffer> = [];
+  for await (const chunk of stream) {
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+};
+
+const readFromFileOrStdin = (path: string) => {
+  return path === "-" ? readStream(stdin) : fs.readFile(path, "utf8");
+};
+
 const getDoChanges = (args: Array<string>) => {
   const doChanges = validation.decodeOrDefault(
     cmdConfig.booleanString.decode,
@@ -86,8 +99,7 @@ const loadConfig = async (
 ) => {
   const { bootstrapperApp, ...parsed } = validation.decodeOrThrow(
     cmdConfig.config.decode,
-    // TODO read stdin if configPath == "-"
-    JSON.parse(await fs.readFile(configPath, "utf-8")),
+    JSON.parse(await readFromFileOrStdin(configPath)),
   );
   const {
     pulumiEncryptionKeyBitsForBootstrapper,
@@ -173,10 +185,10 @@ const loadConfig = async (
 
 const constructPulumiPipelineConfigs = (
   pulumiEncryptionKeyBitsForBootstrapper:
-    | cmdConfig.PulumiPipelineConfig
+    | cmdConfig.PulumiPipelineEncryptionKeyBits
     | undefined,
   pulumiEncryptionKeyBitsForEnvSpecificPipeline:
-    | cmdConfig.PulumiPipelineConfig
+    | cmdConfig.PulumiPipelineEncryptionKeyBits
     | undefined,
 ) => ({
   pulumiEncryptionKeyBitsForBootstrapper:
@@ -188,7 +200,7 @@ const constructPulumiPipelineConfigs = (
 const constructOrganizationObject = ({
   organization,
   azure: { subscriptionId },
-}: Pick<cmdConfig.Config, "organization" | "azure">) => ({
+}: Pick<cmdConfig.Config, "organization" | "azure">): program.Organization => ({
   ...organization,
   environments: organization.environments.map((envNameOrConfig) =>
     typeof envNameOrConfig === "string"
@@ -196,7 +208,10 @@ const constructOrganizationObject = ({
           name: envNameOrConfig,
           subscriptionId,
         }
-      : envNameOrConfig,
+      : {
+          ...envNameOrConfig,
+          subscriptionId: envNameOrConfig.subscriptionId ?? subscriptionId,
+        },
   ),
 });
 
