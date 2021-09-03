@@ -13,24 +13,18 @@ export const pulumiCommand = t.union(
 /**
  * This is runtime validation for configuration file about the pipeline that can be stored e.g. to Git repo
  */
-export const configuration = t.intersection(
-  [
-    t.type({}, "PulumiAzureBackendPipelineConfigurationMandatory"),
-    t.partial(
-      {
-        /**
-         * Name of the environment variable which holds the JSON-encoded value of @see pipelineConfiguration
-         */
-        pipelineConfigEnvName: validation.nonEmptyString,
-        /**
-         * Path to .js file (without .js suffix) where pulumi program is located. Must have default export, or export called "pulumiProgram".
-         * If not specified, the value of @see defaultEntrypointFileName is used.
-         */
-        entrypointModuleName: validation.nonEmptyString,
-      },
-      "PulumiAzureBackendPipelineConfigurationOptional",
-    ),
-  ],
+export const configuration = t.partial(
+  {
+    /**
+     * Name of the environment variable which holds the JSON-encoded value of @see pipelineConfiguration
+     */
+    pipelineConfigEnvName: validation.nonEmptyString,
+    /**
+     * Path to .js file (without .js suffix) where pulumi program is located. Must have default export, or export called "pulumiProgram".
+     * If not specified, the value of @see defaultEntrypointFileName is used.
+     */
+    entrypointModuleName: validation.nonEmptyString,
+  },
   "PulumiAzureBackendPipelineConfiguration",
 );
 
