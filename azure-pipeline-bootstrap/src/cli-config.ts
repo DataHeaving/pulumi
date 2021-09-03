@@ -159,11 +159,22 @@ export const config = t.intersection(
     ),
     t.partial(
       {
-        pulumi: t.partial({
-          pulumiEncryptionKeyBitsForBootstrapper: pipelineEncryptionKeyBits,
-          pulumiEncryptionKeyBitsForEnvSpecificPipeline:
-            pipelineEncryptionKeyBits,
-        }),
+        pulumi: t.partial(
+          {
+            pulumiEncryptionKeyBitsForBootstrapper: pipelineEncryptionKeyBits,
+            pulumiEncryptionKeyBitsForEnvSpecificPipeline:
+              pipelineEncryptionKeyBits,
+          },
+          "PulumiBootstrapConfigOptional",
+        ),
+        namingConventions: t.partial(
+          {
+            storageContainerPrefixString: t.string,
+            keyNamePrefix: t.string,
+            secretNamePrefix: t.string,
+          },
+          "NamingConventionsConfigOptional",
+        ),
       },
       "BootstrapConfigOptional",
     ),

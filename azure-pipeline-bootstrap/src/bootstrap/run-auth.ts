@@ -1,7 +1,9 @@
 import * as auth from "@azure/core-auth";
-import * as common from "./common";
+import * as events from "./events";
+import * as common from "./run-common";
 
 export interface Inputs {
+  eventEmitter: events.BootstrapEventEmitter;
   credentials: auth.TokenCredential;
   subscriptionId: string;
   principalId: string;

@@ -11,9 +11,11 @@ import {
 } from "@data-heaving/azure-kv-secret";
 import * as utils from "@data-heaving/common";
 import * as pulumiAzure from "@data-heaving/pulumi-azure";
-import * as common from "./common";
+import * as events from "./events";
+import * as common from "./run-common";
 
 export interface Inputs {
+  eventEmitter: events.BootstrapEventEmitter;
   credentials: auth.TokenCredential;
   azure: pulumiAzure.AzureCloudInformationFull;
   principalId: string;

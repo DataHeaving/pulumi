@@ -6,11 +6,14 @@ import * as validation from "@data-heaving/common-validation";
 import * as utils from "@data-heaving/common";
 import * as crypto from "crypto";
 import * as uuid from "uuid";
-import * as common from "./common";
-import * as certs from "./certs";
+import * as types from "./types";
+import * as events from "./events";
+import * as common from "./run-common";
+import * as certs from "./run-certs";
 import { isDeepStrictEqual } from "util";
 
 export interface Inputs {
+  eventEmitter: events.BootstrapEventEmitter;
   credentials: auth.TokenCredential;
   graphClient: graph.Client;
   bootstrapperApp: {
@@ -21,23 +24,35 @@ export interface Inputs {
 }
 
 export const ensureBootstrapSPIsConfigured = async ({
+  eventEmitter,
   credentials,
   graphClient,
   bootstrapperApp: { displayName, willNeedToCreateAADApps },
   certificatePEM,
 }: Inputs) => {
   // Ensure that app ("Enterprise Application") exists
-  const app = await ensureBootstrapperAppExists(graphClient, displayName);
+  const app = await ensureBootstrapperAppExists(
+    eventEmitter,
+    graphClient,
+    displayName,
+  );
   const { appId } = app;
 
   // Concurrently,
   // - ensure that service principal("App Registration") exists, and
   // - ensure that app has correct certificate-based authentication configured
   // - ensure that app has correct permissions configured
+  // Last two items can be done concurrently since PATCH request will not modify same properties.
   const [sp] = await Promise.all([
-    ensureBootstrapperSPExists(graphClient, appId),
-    ensureCertificateAuthenticationExists(graphClient, app, certificatePEM),
+    ensureBootstrapperSPExists(eventEmitter, graphClient, appId),
+    ensureCertificateAuthenticationExists(
+      eventEmitter,
+      graphClient,
+      app,
+      certificatePEM,
+    ),
     ensureAppHasSufficientPermissions(
+      eventEmitter,
       credentials,
       willNeedToCreateAADApps,
       graphClient,
@@ -52,113 +67,62 @@ export const ensureBootstrapSPIsConfigured = async ({
 };
 
 const ensureBootstrapperAppExists = async (
+  eventEmitter: events.BootstrapEventEmitter,
   client: graph.Client,
   bootstrapperAppName: string,
 ) => {
   const api = client.api("/applications");
-  return (
+  const existingApp = validation.decodeOrThrow(
+    graphAPIResultOf(common.listOf(types.application)).decode,
+    await api.filter(`displayName eq '${bootstrapperAppName}'`).get(),
+  ).value[0];
+  const application =
+    existingApp ??
     validation.decodeOrThrow(
-      graphAPIResultOf(common.listOf(application)).decode,
-      await api.filter(`displayName eq '${bootstrapperAppName}'`).get(),
-    ).value[0] ??
-    validation.decodeOrThrow(
-      application.decode,
+      types.application.decode,
       await api.post({
         displayName: bootstrapperAppName,
       }),
-    )
-  );
+    );
+  eventEmitter.emit("afterADApplicationExists", {
+    application,
+    createNew: !existingApp,
+  });
+  return application;
 };
 
-const applicationRequiredResourceAccess = t.type(
-  {
-    resourceAppId: validation.uuid,
-    resourceAccess: t.array(
-      t.type({
-        type: validation.nonEmptyString, // "Role" | something else
-        id: validation.uuid,
-      }),
-      "ResourceAccessList",
-    ),
-  },
-  "RequiredResourceAccess",
-);
-type ApplicationRequiredResourceAccess = t.TypeOf<
-  typeof applicationRequiredResourceAccess
->;
-
-const application = t.type(
-  {
-    ["@odata.id"]: validation.urlWithPath,
-    id: validation.uuid,
-    appId: validation.uuid,
-    displayName: t.string,
-    keyCredentials: t.array(
-      t.type(
-        {
-          customKeyIdentifier: validation.nonEmptyString, // TODO hex string
-          displayName: t.string,
-          endDateTime: validation.isoDateString,
-          key: t.union([t.null, t.string]), // TODO base64 string
-          keyId: validation.uuid,
-          startDateTime: validation.isoDateString,
-          // The following two properties are actually discriminating type union properties, but let's handle that later if needed
-          type: t.union([
-            t.literal("AsymmetricX509Cert"),
-            t.literal("X509CertAndPassword"),
-          ]),
-          usage: t.union([t.literal("Verify"), t.literal("Sign")]),
-        },
-        "KeyCredential",
-      ),
-    ),
-    requiredResourceAccess: t.array(
-      applicationRequiredResourceAccess,
-      "RequiredResourceAccessList",
-    ),
-    // And many others
-  },
-  "Application",
-);
-
-type Application = t.TypeOf<typeof application>;
-
 const ensureBootstrapperSPExists = async (
+  eventEmitter: events.BootstrapEventEmitter,
   client: graph.Client,
   bootstrapperAppId: string,
 ) => {
   const api = client.api("/servicePrincipals");
-  return (
+  const existingSP = validation.decodeOrThrow(
+    graphAPIResultOf(common.listOf(types.servicePrincipal)).decode,
+    await api.filter(`appId eq '${bootstrapperAppId}'`).get(),
+  ).value[0];
+  const servicePrincipal =
+    existingSP ??
     validation.decodeOrThrow(
-      graphAPIResultOf(common.listOf(servicePrincipal)).decode,
-      await api.filter(`appId eq '${bootstrapperAppId}'`).get(),
-    ).value[0] ??
-    validation.decodeOrThrow(
-      servicePrincipal.decode,
+      types.servicePrincipal.decode,
       await api.post({
         appId: bootstrapperAppId,
       }),
-    )
-  );
+    );
+  eventEmitter.emit("afterADServicePrincipalExists", {
+    servicePrincipal,
+    createNew: !existingSP,
+  });
+  return servicePrincipal;
 };
 
-const servicePrincipal = t.type(
-  {
-    ["@odata.id"]: validation.urlWithPath,
-    id: validation.uuid,
-    appId: validation.uuid,
-    displayName: t.string,
-    // And many others
-    // They include also 'keyCredentials', however, that is not used for logging in at least, so we don't touch those here.
-  },
-  "ServicePrincipal",
-);
-
 const ensureCertificateAuthenticationExists = async (
+  eventEmitter: events.BootstrapEventEmitter,
   client: graph.Client,
-  { id, keyCredentials }: Application,
+  application: types.Application,
   certificatePem: string,
 ) => {
+  const { id, keyCredentials } = application;
   const certificatePattern = new RegExp(
     `${certs.BEGIN_CERTIFICATE.source}${
       /(\n\r?|\r\n?)([A-Za-z0-9+/\n\r]+=*)(\n\r?|\r\n?)(-+END CERTIFICATE-+)/
@@ -181,95 +145,76 @@ const ensureCertificateAuthenticationExists = async (
     (keyCredential) =>
       keyCredential.customKeyIdentifier === customKeyIdentifier,
   );
-  if (!existingKey) {
+  const createNew = !existingKey;
+  const credential: events.CredentialInfo = existingKey ?? {
+    type: "AsymmetricX509Cert",
+    usage: "Verify",
+    keyId: uuid.v4(),
+    key: Buffer.from(certificatePem).toString("base64"),
+  };
+  const waitTimeInSecondsIfCreated = 120; // Sometimes even 60-90sec doesn't work... AAD be ridicilously slow.
+  eventEmitter.emit("beforeApplicationCredentialsExists", {
+    application,
+    credential: utils.deepCopy(credential),
+    createNew,
+    waitTimeInSecondsIfCreated,
+  });
+  if (createNew) {
     // Please notice, the tricky part about /applications/${appId}/addKey, from https://docs.microsoft.com/en-us/graph/api/application-addkey?view=graph-rest-1.0&tabs=javascript
     // "Applications that don’t have any existing valid certificates (no certificates have been added yet, or all certificates have expired), won’t be able to use this service action. You can use the Update application operation to perform an update instead."
-    const api = client.api(`/applications/${id}`);
-    await api.patch({
-      keyCredentials: [
-        ...keyCredentials,
-        {
-          type: "AsymmetricX509Cert",
-          usage: "Verify",
-          keyId: uuid.v4(),
-          key: Buffer.from(certificatePem).toString("base64"),
-        },
-      ],
+    await client.api(`/applications/${id}`).patch({
+      keyCredentials: [...keyCredentials, credential],
     });
     // We must wait some time to let the AAD eventually consistent DB to catch up - if we don't do this, we will get an error when we try to sign in with SP right after this
-    // eslint-disable-next-line no-console
-    console.info(
-      "Updated SP certificate auth, waiting 2min before proceeding...",
-    );
-    await utils.sleep(120 * 1000); // Sometimes even 60-90sec doesn't work... AAD be ridicilously slow.
+    await utils.sleep(waitTimeInSecondsIfCreated * 1000);
   }
 };
 
 const ensureAppHasSufficientPermissions = async (
+  eventEmitter: events.BootstrapEventEmitter,
   credentials: auth.TokenCredential,
   bootstrapperWillNeedToCreateAADApps: boolean,
   client: graph.Client,
-  app: Application,
+  application: types.Application,
 ) => {
   // This is currently only needed if app needs to create other apps
   if (bootstrapperWillNeedToCreateAADApps) {
-    const additionalPermissions: Array<AppPermissionAddInfo> = [];
-    // One can get all possible permissions via https://graph.windows.net/myorganization/applicationRefs/00000003-0000-0000-c000-000000000000?api-version=2.0&lang=en
-    // And then examining items in "oauth2Permissions" array
-    // Notice!!!! the Pulumi azuread provider uses azure-sdk-for-go, which underneath uses graphrbac, which underneath uses legacy Azure AD Graph endpoint ( https://graph.windows.net/ )!
-    // This is why we must, instead of adding Microsoft Graph permissions, add Azure AD Graph permissions!
-    addToPatchablePermissions(app, additionalPermissions, {
-      // resourceAppId: "00000003-0000-0000-c000-000000000000", // Microsoft Graph
-      // resourceAccess: [
-      //   {
-      //     type: "Role",
-      //     id: "18a4783c-866b-4cc7-a460-3d5e5662c884", // Application.ReadWrite.OwnedBy
-      //   },
-      // ],
-      resourceAppId: "00000002-0000-0000-c000-000000000000", // AAD Graph
-      resourceAccess: [
+    const { id } = application;
+    const patchableAccess = createPatchableRequiredAccessArray(
+      application.requiredResourceAccess,
+      [
         {
-          type: "Role",
-          id: "824c81eb-e3f8-4ee6-8f6d-de7f50d565b7", // Application.ReadWrite.OwnedBy
+          // resourceAppId: "00000003-0000-0000-c000-000000000000", // Microsoft Graph
+          // resourceAccess: [
+          //   {
+          //     type: "Role",
+          //     id: "18a4783c-866b-4cc7-a460-3d5e5662c884", // Application.ReadWrite.OwnedBy
+          //   },
+          // ],
+          resourceAppId: "00000002-0000-0000-c000-000000000000", // AAD Graph
+          resourceAccess: [
+            {
+              type: "Role",
+              id: "824c81eb-e3f8-4ee6-8f6d-de7f50d565b7", // Application.ReadWrite.OwnedBy
+            },
+          ],
         },
       ],
+    );
+    const createNew = patchableAccess.length > 0;
+    const waitTimeInSecondsIfCreated = 60;
+    eventEmitter.emit("beforeApplicationHasEnoughPermissions", {
+      application,
+      permissions: utils.deepCopy(patchableAccess),
+      createNew,
+      waitTimeInSecondsIfCreated,
     });
 
-    const { id } = app;
-
-    if (additionalPermissions.length > 0) {
-      const deduplicatedAdditionalPermissions = utils.deduplicate(
-        additionalPermissions,
-        ({ indexToRemove }) => `${indexToRemove}`,
-      );
-      if (
-        deduplicatedAdditionalPermissions.length < additionalPermissions.length
-      ) {
-        throw new Error("Not implemented: complex permission delta");
-      }
-      const patchableAccess = [...app.requiredResourceAccess];
-      for (const {
-        indexToRemove,
-        accessToAdd,
-      } of deduplicatedAdditionalPermissions) {
-        if (indexToRemove >= 0) {
-          patchableAccess[indexToRemove].resourceAccess.concat(
-            accessToAdd.resourceAccess,
-          );
-        } else {
-          patchableAccess.push(accessToAdd);
-        }
-      }
-
+    if (createNew) {
       await client.api(`/applications/${id}`).patch({
         requiredResourceAccess: patchableAccess,
       });
-
-      // eslint-disable-next-line no-console
-      console.info(
-        "Updated bootstrapper app permissions, waiting 1min before proceeding to allow all Azure internal databases to catch up",
-      );
-      await utils.sleep(60 * 1000);
+      await utils.sleep(waitTimeInSecondsIfCreated * 1000);
     }
 
     // This is same way as used by Azure CLI
@@ -291,7 +236,7 @@ const ensureAppHasSufficientPermissions = async (
     );
 
     const response = await consentClient.sendRequest({
-      url: `https://main.iam.ad.ext.azure.com/api/RegisteredApplications/${app.appId}/Consent`, // "https://graph.windows.net/myorganization/consentToApp"
+      url: `https://main.iam.ad.ext.azure.com/api/RegisteredApplications/${application.appId}/Consent`, // "https://graph.windows.net/myorganization/consentToApp"
       method: "POST",
       queryParameters: {
         //["api-version"]: "2.0",
@@ -314,17 +259,60 @@ const ensureAppHasSufficientPermissions = async (
   }
 };
 
+const createPatchableRequiredAccessArray = (
+  existingPermissions: ReadonlyArray<types.ApplicationRequiredResourceAccess>,
+  additionalPermissions: ReadonlyArray<types.ApplicationRequiredResourceAccess>,
+) => {
+  const permissionAddInfos: Array<AppPermissionAddInfo> = [];
+  // One can get all possible permissions via https://graph.windows.net/myorganization/applicationRefs/00000003-0000-0000-c000-000000000000?api-version=2.0&lang=en
+  // And then examining items in "oauth2Permissions" array
+  // Notice!!!! the Pulumi azuread provider uses azure-sdk-for-go, which underneath uses graphrbac, which underneath uses legacy Azure AD Graph endpoint ( https://graph.windows.net/ )!
+  // This is why we must, instead of adding Microsoft Graph permissions, add Azure AD Graph permissions!
+  for (const additionalPermission of additionalPermissions) {
+    addToPatchablePermissions(
+      existingPermissions,
+      permissionAddInfos,
+      additionalPermission,
+    );
+  }
+  const patchableAccess: Array<types.ApplicationRequiredResourceAccess> = [];
+  if (existingPermissions.length > 0) {
+    const deduplicatedAdditionalPermissions = utils.deduplicate(
+      permissionAddInfos,
+      ({ indexToRemove }) => `${indexToRemove}`,
+    );
+    if (deduplicatedAdditionalPermissions.length < permissionAddInfos.length) {
+      throw new Error("Not implemented: complex permission delta");
+    }
+    patchableAccess.push(...existingPermissions);
+    for (const {
+      indexToRemove,
+      accessToAdd,
+    } of deduplicatedAdditionalPermissions) {
+      if (indexToRemove >= 0) {
+        patchableAccess[indexToRemove].resourceAccess.concat(
+          accessToAdd.resourceAccess,
+        );
+      } else {
+        patchableAccess.push(accessToAdd);
+      }
+    }
+  }
+
+  return patchableAccess;
+};
+
 interface AppPermissionAddInfo {
   indexToRemove: number;
-  accessToAdd: ApplicationRequiredResourceAccess;
+  accessToAdd: types.ApplicationRequiredResourceAccess;
 }
 
 const addToPatchablePermissions = (
-  app: Application,
+  existingAccess: ReadonlyArray<types.ApplicationRequiredResourceAccess>,
   accessToAdd: Array<AppPermissionAddInfo>,
-  requiredAccess: ApplicationRequiredResourceAccess,
+  requiredAccess: types.ApplicationRequiredResourceAccess,
 ) => {
-  const existingForResourceAppIdx = app.requiredResourceAccess.findIndex(
+  const existingForResourceAppIdx = existingAccess.findIndex(
     (r) => r.resourceAppId === requiredAccess.resourceAppId,
   );
   const missingAccess =
@@ -332,9 +320,9 @@ const addToPatchablePermissions = (
       ? []
       : requiredAccess.resourceAccess.filter(
           (r) =>
-            !app.requiredResourceAccess[
-              existingForResourceAppIdx
-            ].resourceAccess.some((a) => isDeepStrictEqual(r, a)),
+            !existingAccess[existingForResourceAppIdx].resourceAccess.some(
+              (a) => isDeepStrictEqual(r, a),
+            ),
         );
   if (existingForResourceAppIdx < 0 || missingAccess.length > 0) {
     accessToAdd.push({

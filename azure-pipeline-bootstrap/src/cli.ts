@@ -12,7 +12,7 @@ import * as program from ".";
 import * as pulumiSetup from "./bootstrap";
 
 // Command-line args:
-// [doChanges, [configPath, [...authKinds]]]
+// [doChanges="true"|"false", [configPath, [...authKinds]]]
 const main = async () => {
   // Perform parsing arguments
   // We must do it sequentially in this order, as getDoChanges and getConfigPath may modify arg array
@@ -47,11 +47,14 @@ const main = async () => {
 
   const { tempDir, programConfig } = await loadConfig(credentials, configPath);
   try {
-    await program.main({
-      credentials,
-      doChanges,
-      ...programConfig,
-    });
+    await program.main(
+      {
+        credentials,
+        doChanges,
+        ...programConfig,
+      },
+      undefined, // Pass undefined as event emitters value, in order for output to go to console
+    );
   } finally {
     if (tempDir) {
       await fs.rm(tempDir, { recursive: true });

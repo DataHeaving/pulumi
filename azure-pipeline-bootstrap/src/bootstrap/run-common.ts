@@ -3,7 +3,7 @@ import * as authArm from "@azure/arm-authorization";
 import * as t from "io-ts";
 import * as validation from "@data-heaving/common-validation";
 import * as uuid from "uuid";
-import * as common from "./common";
+import * as common from "./run-common";
 
 export const listOf = <TType extends t.Mixed>(item: TType) =>
   t.array(item, `${item.name}List`);
