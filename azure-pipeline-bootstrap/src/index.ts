@@ -1,20 +1,23 @@
 import * as id from "@azure/identity";
-import * as pulumiAutomation from "@data-heaving/pulumi-automation";
 import * as pulumiAzure from "@data-heaving/pulumi-azure";
+import * as pipeline from "@data-heaving/pulumi-azure-pipeline";
+import * as pulumiSetup from "@data-heaving/pulumi-azure-pipeline-setup";
 import * as bootstrap from "./bootstrap";
-import * as pulumi from "@data-heaving/pulumi-azure-pipeline-setup";
 
 export interface Inputs {
   credentials: id.TokenCredential;
   bootstrapperApp: BootstrapperAppSP | BootstrapperAppMSI;
   azure: pulumiAzure.AzureCloudInformationFull;
-  organization: bootstrap.OrganizationInfo & pulumi.OrganizationInfo;
+  organization: Organization;
   pipelineConfigs: {
     pulumiEncryptionKeyBitsForBootstrapper: number;
     pulumiEncryptionKeyBitsForEnvSpecificPipeline: number;
   };
   doChanges: boolean;
 }
+
+export type Organization = bootstrap.OrganizationInfo &
+  pulumiSetup.OrganizationInfo;
 
 export type BootstrapperApp = BootstrapperAppSP | BootstrapperAppMSI;
 
@@ -23,7 +26,7 @@ export type BootstrapperAppSP = Omit<
   "willNeedToCreateAADApps"
 > & {
   // This exists only for SP info, as MSIs are unable to do any AAD changes.
-  envSpecificPulumiPipelineSPAuth?: pulumi.SPCertificateInfo | undefined;
+  envSpecificPulumiPipelineSPAuth?: pulumiSetup.SPCertificateInfo | undefined;
 };
 export type BootstrapperAppMSI = bootstrap.BootstrapperAppMSI;
 
@@ -31,6 +34,8 @@ export type BootstrapperAppMSI = bootstrap.BootstrapperAppMSI;
 export const main = async ({
   doChanges,
   bootstrapperApp,
+  organization,
+  azure,
   ...input
 }: Inputs) => {
   console.info("Setting up infrastructure for Pulumi...");
@@ -40,95 +45,75 @@ export const main = async ({
     pulumiConfigInfo,
     envSpecificPipelineConfigReader,
   } = await bootstrap.default({
-    ...input,
+    credentials: input.credentials,
+    azure,
+    organization,
     pulumiEncryptionKeyBits:
       input.pipelineConfigs.pulumiEncryptionKeyBitsForBootstrapper,
     bootstrapperApp: getBootstrapAppForSetup(bootstrapperApp),
   });
   console.info("Done."); // Don't print pulumiConfigInfo, as it contains storage account key
-  console.info("Acquiring Pulumi stack...");
-  const stack = await pulumiAzure.getOrCreateStackWithAzureBackend({
-    pulumi: {
-      auth: pulumiConfigInfo.auth,
-      backendConfig: pulumiConfigInfo.backendConfig,
-      programArgs: {
-        projectName: "bootstrap",
-        stackName: "main",
-        program: () =>
-          pulumi.pulumiProgram({
-            organization: input.organization,
-            envSpecificPipelineConfigReader,
-            pulumiPipelineConfig: {
-              auth:
-                bootstrapperApp.type === "sp" &&
-                bootstrapperApp.envSpecificPulumiPipelineSPAuth
-                  ? {
-                      type: "sp" as const,
-                      certificateConfig:
-                        bootstrapperApp.envSpecificPulumiPipelineSPAuth,
-                    }
-                  : {
-                      type: "msi" as const,
-                      sharedSARGName: cicdRGName,
-                      sharedSAName:
-                        pulumiConfigInfo.backendConfig.storageAccountName,
-                      containerPrefixString: "cicd-site-",
-                    },
-              pulumiKVInfo: {
-                rgName: cicdRGName,
-                name: kvName,
-                keyNamePrefix: "cicd-site-",
-                secretNamePrefix: "config-site-",
-                encryptionKeyBits:
-                  input.pipelineConfigs
-                    .pulumiEncryptionKeyBitsForEnvSpecificPipeline,
+  console.info(
+    `Executing Pulumi pipeline for environments ${organization.environments
+      .map((env) => (typeof env === "string" ? env : env.name))
+      .join(", ")}.`,
+  );
+  // For some reason, due some TS compiler bug, we must specify generic argument explicitly.
+  return await pipeline.runPulumiPipeline<"up" | "preview">(
+    {
+      pulumi: {
+        auth: pulumiConfigInfo.auth,
+        backendConfig: pulumiConfigInfo.backendConfig,
+        programArgs: {
+          projectName: "bootstrap",
+          stackName: "main",
+          program: () =>
+            pulumiSetup.pulumiProgram({
+              organization,
+              envSpecificPipelineConfigReader,
+              pulumiPipelineConfig: {
+                auth:
+                  bootstrapperApp.type === "sp" &&
+                  bootstrapperApp.envSpecificPulumiPipelineSPAuth
+                    ? {
+                        type: "sp" as const,
+                        certificateConfig:
+                          bootstrapperApp.envSpecificPulumiPipelineSPAuth,
+                      }
+                    : {
+                        type: "msi" as const,
+                        sharedSARGName: cicdRGName,
+                        sharedSAName:
+                          pulumiConfigInfo.backendConfig.storageAccountName,
+                        containerPrefixString: "cicd-env-",
+                      },
+                pulumiKVInfo: {
+                  rgName: cicdRGName,
+                  name: kvName,
+                  keyNamePrefix: "cicd-env-",
+                  secretNamePrefix: "config-env-",
+                  encryptionKeyBits:
+                    input.pipelineConfigs
+                      .pulumiEncryptionKeyBitsForEnvSpecificPipeline,
+                },
               },
-            },
-            targetResources: {
-              cicdRGSuffix: "bootstrap",
-              targetRGSuffix: undefined, // No target RG creation
-              //skipTargetRoleAssignment: true, // No "Owner" role assignment to subscription (as we already did it in bootstrap.default)
-            },
-          }),
+              targetResources: {
+                cicdRGSuffix: "bootstrap",
+                targetRGSuffix: undefined, // No target RG creation
+                skipTargetRoleAssignment: true, // No "Owner" role assignment to subscription (as we already did it in bootstrap.default)
+              },
+            }),
+        },
+      },
+      azure: {
+        tenantId: azure.tenantId,
+        // Intentionally leave out subscription ID in order to cause errors if default provider is accidentally used.
+        subscriptionId: undefined,
       },
     },
-    azure: {
-      tenantId: input.azure.tenantId,
-      // Intentionally leave out subscription ID in order to cause errors if default provider is used.
-      subscriptionId: undefined,
-    },
-  });
-  console.info("Done.");
-  console.info(
-    "Handling changes of resources for environments...",
-    input.organization.environments.map(({ name }) => name),
-  );
-  await pulumiAutomation.initPulumiExecution(
-    pulumiAutomation.consoleLoggingEventEmitterBuilder().createEventEmitter(),
-    stack,
     ["azure-native", "azuread", "tls"],
+    doChanges ? "up" : "preview",
   );
-  if (doChanges) {
-    console.info("Performing infrastructure changes...");
-    const result = await stack.up({ onOutput: console.info, diff: true });
-    console.log(
-      `update summary: \n${JSON.stringify(
-        result.summary.resourceChanges,
-        null,
-        4,
-      )}`,
-    );
-    console.info("Done.");
-  } else {
-    console.info("Previewing infrastructure changes...");
-    const result = await stack.preview({
-      onOutput: console.info,
-      diff: true,
-    });
-    console.log(
-      `change summary: \n${JSON.stringify(result.changeSummary, null, 4)}`,
-    );
-  }
 };
 
 const getBootstrapAppForSetup = (
