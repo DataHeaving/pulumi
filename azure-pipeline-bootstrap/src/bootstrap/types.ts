@@ -71,6 +71,20 @@ export const servicePrincipal = t.type(
     id: validation.uuid,
     appId: validation.uuid,
     displayName: t.string,
+    appRoles: t.array(
+      t.type(
+        {
+          id: validation.uuid,
+          origin: t.string, // "Application" | ... ?
+          value: validation.nonEmptyString,
+          description: t.union([t.string, t.null]),
+          displayName: t.union([t.string, t.null]),
+          // allowedMemberTypes: t.array(t.string) <- "Application" | ...?
+        },
+        "AppRole",
+      ),
+      "AppRoleList",
+    ),
     // And many others
     // They include also 'keyCredentials', however, that is not used for logging in at least, so we don't touch those here.
   },
@@ -79,5 +93,19 @@ export const servicePrincipal = t.type(
 
 export type ServicePrincipal = t.TypeOf<typeof servicePrincipal>;
 
-export const OAUTH_SCOPE_ADMIN_CONSENT =
-  "74658136-14ec-4630-ad9b-26e160ff0fc6/.default"; // This UUID corresponds to scope "https://main.iam.ad.ext.azure.com"
+export const servicePrincipalAppRoleAssignment = t.type({
+  ["@odata.id"]: validation.urlWithPath,
+  id: validation.nonEmptyString,
+  appRoleId: validation.uuid,
+  createdDateTime: validation.isoDateString,
+  deletedDateTime: t.union([validation.isoDateString, t.null]),
+  principalDisplayName: t.string,
+  principalId: validation.uuid, // the 'id' field of service principal
+  principalType: t.string, // "ServicePrincipal" | ...?
+  resourceDisplayName: t.string, // E.g. "Windows Azure Active Directory"
+  resourceId: validation.uuid,
+});
+
+export type ServicePrincipalAppRoleAssignment = t.TypeOf<
+  typeof servicePrincipalAppRoleAssignment
+>;

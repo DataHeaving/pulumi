@@ -260,13 +260,7 @@ const getCredentials = (
         : [
             "https://vault.azure.net/.default", // For checking for existing bootstrapper app cert config
             OAUTH_SCOPE_MICROSOFT_GRAPH, // For creating and setting up bootstrapper SP in AAD
-          ].concat(
-            bootstrapperApp.envSpecificPulumiPipelineSPAuth
-              ? [
-                  pulumiSetup.OAUTH_SCOPE_ADMIN_CONSENT, // For doing admin grant consent if bootstrapper SP will need to create other AAD SPs
-                ]
-              : [],
-          ),
+          ],
     ),
   );
 };

@@ -1,6 +1,4 @@
 import * as graph from "@microsoft/microsoft-graph-client";
-import * as rest from "@azure/ms-rest-js";
-import * as id from "@azure/identity";
 import * as t from "io-ts";
 import * as validation from "@data-heaving/common-validation";
 import * as common from "@data-heaving/common";
@@ -14,7 +12,6 @@ import { isDeepStrictEqual } from "util";
 
 export interface Inputs {
   eventEmitter: events.BootstrapEventEmitter;
-  credentials: id.TokenCredential;
   graphClient: graph.Client;
   bootstrapperApp: {
     displayName: string;
@@ -25,7 +22,6 @@ export interface Inputs {
 
 export const ensureBootstrapSPIsConfigured = async ({
   eventEmitter,
-  credentials,
   graphClient,
   bootstrapperApp: { displayName, willNeedToCreateAADApps },
   certificatePEM,
@@ -51,14 +47,15 @@ export const ensureBootstrapSPIsConfigured = async ({
       app,
       certificatePEM,
     ),
-    ensureAppHasSufficientPermissions(
-      eventEmitter,
-      credentials,
-      willNeedToCreateAADApps,
-      graphClient,
-      app,
-    ),
   ]);
+
+  await ensureAppHasSufficientPermissions(
+    eventEmitter,
+    willNeedToCreateAADApps,
+    graphClient,
+    app,
+    sp,
+  );
 
   return {
     clientId: appId,
@@ -73,7 +70,7 @@ const ensureBootstrapperAppExists = async (
 ) => {
   const api = client.api("/applications");
   const existingApp = validation.decodeOrThrow(
-    graphAPIResultOf(utils.listOf(types.application)).decode,
+    graphAPIListOf(types.application).decode,
     await api.filter(`displayName eq '${bootstrapperAppName}'`).get(),
   ).value[0];
   const application =
@@ -91,16 +88,14 @@ const ensureBootstrapperAppExists = async (
   return application;
 };
 
+const spGraphApi = "/servicePrincipals";
 const ensureBootstrapperSPExists = async (
   eventEmitter: events.BootstrapEventEmitter,
   client: graph.Client,
   bootstrapperAppId: string,
 ) => {
-  const api = client.api("/servicePrincipals");
-  const existingSP = validation.decodeOrThrow(
-    graphAPIResultOf(utils.listOf(types.servicePrincipal)).decode,
-    await api.filter(`appId eq '${bootstrapperAppId}'`).get(),
-  ).value[0];
+  const api = client.api(spGraphApi);
+  const existingSP = await getSPByAppId(api, bootstrapperAppId);
   const servicePrincipal =
     existingSP ??
     validation.decodeOrThrow(
@@ -115,6 +110,15 @@ const ensureBootstrapperSPExists = async (
   });
   return servicePrincipal;
 };
+
+const getSPByAppId = async (
+  api: graph.GraphRequest,
+  appId: string,
+): Promise<types.ServicePrincipal | undefined> =>
+  validation.decodeOrThrow(
+    graphAPIListOf(types.servicePrincipal).decode,
+    await api.filter(`appId eq '${appId}'`).get(),
+  ).value[0];
 
 const ensureCertificateAuthenticationExists = async (
   eventEmitter: events.BootstrapEventEmitter,
@@ -175,102 +179,180 @@ const ensureCertificateAuthenticationExists = async (
   }
 };
 
+const appRequiredPermissions: Array<types.ApplicationRequiredResourceAccess> = [
+  {
+    // resourceAppId: "00000003-0000-0000-c000-000000000000", // Microsoft Graph
+    // resourceAccess: [
+    //   {
+    //     type: "Role",
+    //     id: "18a4783c-866b-4cc7-a460-3d5e5662c884", // Application.ReadWrite.OwnedBy
+    //   },
+    // ],
+    // We must grant permissions for AAD graph, since Pulumi AAD provider uses that instead of Microsoft Graph
+    resourceAppId: "00000002-0000-0000-c000-000000000000", // AAD Graph
+    resourceAccess: [
+      {
+        type: "Role",
+        id: "824c81eb-e3f8-4ee6-8f6d-de7f50d565b7", // Application.ReadWrite.OwnedBy
+      },
+    ],
+  },
+];
+
 const ensureAppHasSufficientPermissions = async (
   eventEmitter: events.BootstrapEventEmitter,
-  credentials: id.TokenCredential,
   bootstrapperWillNeedToCreateAADApps: boolean,
   client: graph.Client,
   application: types.Application,
+  servicePrincipal: types.ServicePrincipal,
 ) => {
   // This is currently only needed if app needs to create other apps
   if (bootstrapperWillNeedToCreateAADApps) {
-    const { id } = application;
-    const patchableAccess = createPatchableRequiredAccessArray(
-      application.requiredResourceAccess,
-      [
-        {
-          // resourceAppId: "00000003-0000-0000-c000-000000000000", // Microsoft Graph
-          // resourceAccess: [
-          //   {
-          //     type: "Role",
-          //     id: "18a4783c-866b-4cc7-a460-3d5e5662c884", // Application.ReadWrite.OwnedBy
-          //   },
-          // ],
-          resourceAppId: "00000002-0000-0000-c000-000000000000", // AAD Graph
-          resourceAccess: [
-            {
-              type: "Role",
-              id: "824c81eb-e3f8-4ee6-8f6d-de7f50d565b7", // Application.ReadWrite.OwnedBy
-            },
-          ],
-        },
-      ],
-    );
-    const createNew = patchableAccess.length > 0;
-    const waitTimeInSecondsIfCreated = 60;
-    const eventArgsPermissions =
-      application.requiredResourceAccess.concat(patchableAccess);
-    eventEmitter.emit("beforeApplicationHasEnoughPermissions", {
-      application,
-      permissions: eventArgsPermissions,
-      createNew,
-      waitTimeInSecondsIfCreated,
+    await grantAppPermissions(eventEmitter, client, application);
+    await grantAdminConsent(eventEmitter, client, servicePrincipal);
+  }
+};
+
+const grantAppPermissions = async (
+  eventEmitter: events.BootstrapEventEmitter,
+  client: graph.Client,
+  application: types.Application,
+) => {
+  const { id } = application;
+  const patchableAccess = createPatchableRequiredAccessArray(
+    application.requiredResourceAccess,
+    appRequiredPermissions,
+  );
+  const createNew = patchableAccess.length > 0;
+  const waitTimeInSecondsIfCreated = 60;
+  eventEmitter.emit("beforeApplicationHasEnoughPermissions", {
+    application,
+    permissionsToAssign: patchableAccess,
+    createNew,
+    waitTimeInSecondsIfCreated,
+  });
+
+  if (createNew) {
+    await client.api(`/applications/${id}`).patch({
+      requiredResourceAccess: patchableAccess,
     });
+    await common.sleep(waitTimeInSecondsIfCreated * 1000);
+  }
+};
 
-    if (createNew) {
-      await client.api(`/applications/${id}`).patch({
-        requiredResourceAccess: patchableAccess,
-      });
-      await common.sleep(waitTimeInSecondsIfCreated * 1000);
-    }
+const getResourceSPMap = async (
+  client: graph.Client,
+  ids: ReadonlyArray<{ id: string; isSPId: boolean }>,
+) =>
+  (
+    await Promise.all(
+      ids.map(async ({ id, isSPId }) =>
+        isSPId
+          ? validation.decodeOrThrow(
+              types.servicePrincipal.decode,
+              await client.api(`${spGraphApi}/${id}`).get(),
+            )
+          : await getSPByAppId(client.api(spGraphApi), id),
+      ),
+    )
+  )
+    // .map((sp) => validation.decodeOrThrow(types.servicePrincipal.decode, sp))
+    .reduce<Record<string, types.ServicePrincipal>>((curMap, sp, idx) => {
+      if (!sp) {
+        throw new Error(
+          `Could not find service principal: ${JSON.stringify(ids[idx])}.`,
+        );
+      }
+      curMap[sp.appId] = sp; // In case of AAD, the appID will be the "00000002-0000-0000-c000-000000000000" UUID, which also is resourceAppId of types.ApplicationRequiredResourceAccess
+      return curMap;
+    }, {});
 
-    const consentClient = new rest.ServiceClient(
-      new rest.AzureIdentityCredentialAdapter(
-        credentials,
-        types.OAUTH_SCOPE_ADMIN_CONSENT,
+const grantAdminConsent = async (
+  eventEmitter: events.BootstrapEventEmitter,
+  client: graph.Client,
+  servicePrincipal: types.ServicePrincipal,
+) => {
+  // We need to find out which permission we need to grant admin consent for
+  const spRoleAssignmentsApi = `${spGraphApi}/${servicePrincipal.id}/appRoleAssignments`;
+  const adminConsentedRoleAssignments = validation.decodeOrThrow(
+    graphAPIListOf(types.servicePrincipalAppRoleAssignment).decode,
+    await client.api(spRoleAssignmentsApi).get(),
+  ).value;
+
+  // Get target SPs
+  const consentedResourceSPs = await getResourceSPMap(
+    client,
+    common.deduplicate(
+      adminConsentedRoleAssignments.map(({ resourceId }) => ({
+        id: resourceId,
+        isSPId: true,
+      })),
+      ({ id }) => id,
+    ),
+  );
+
+  const adminConsentedRoleAssignmentsMap = adminConsentedRoleAssignments.reduce<
+    Record<string, Record<string, types.ServicePrincipalAppRoleAssignment>>
+  >((curMap, roleAssignment) => {
+    common.getOrAddGeneric(curMap, roleAssignment.resourceId, () => ({}))[
+      roleAssignment.appRoleId
+    ] = roleAssignment;
+    return curMap;
+  }, {});
+
+  const adminConsentNeededOn = appRequiredPermissions
+    .flatMap(({ resourceAppId, resourceAccess }) => {
+      const resourceSP = consentedResourceSPs[resourceAppId];
+      const missingResources = resourceSP
+        ? resourceAccess.filter(
+            (access) =>
+              !adminConsentedRoleAssignmentsMap[resourceSP.id]?.[access.id],
+          )
+        : resourceAccess;
+      return missingResources.length > 0
+        ? { resourceAppId, resourceAccess: missingResources }
+        : undefined;
+    })
+    .filter(
+      (
+        roleAssignment,
+      ): roleAssignment is types.ApplicationRequiredResourceAccess =>
+        !!roleAssignment,
+    );
+
+  const createNew = adminConsentNeededOn.length > 0;
+  eventEmitter.emit("beforeAdminConsentGranted", {
+    createNew,
+    permissionsToGrant: adminConsentNeededOn,
+    servicePrincipal,
+  });
+  if (createNew) {
+    const consentResourceSPs = await getResourceSPMap(
+      client,
+      adminConsentNeededOn.map(({ resourceAppId }) => ({
+        id: resourceAppId,
+        isSPId: false,
+      })),
+    );
+
+    (
+      await Promise.all(
+        adminConsentNeededOn.flatMap(({ resourceAppId, resourceAccess }) => {
+          return resourceAccess.map((resource) => {
+            return client.api(spRoleAssignmentsApi).post({
+              principalId: servicePrincipal.id,
+              resourceId: consentResourceSPs[resourceAppId].id,
+              appRoleId: resource.id,
+            });
+          });
+        }),
+      )
+    ).map((response) =>
+      validation.decodeOrThrow(
+        types.servicePrincipalAppRoleAssignment.decode,
+        response,
       ),
     );
-    // Using this will for some reason give "The specified api-version is invalid." error. Also, we probably need to convert resource access GUIDs to strings in dynamicPermissions, which would be a bit PITA.
-    // Instead, use the same method as used in Azure CLI
-    // const response = await consentClient.sendRequest({
-    //   url: "https://graph.windows.net/myorganization/consentToApp",
-    //   method: "POST",
-    //   queryParameters: {
-    //     ["api-version"]: "2.0",
-    //   },
-    //   body: {
-    //     checkOnly: false,
-    //     clientAppId: application.appId,
-    //     constraintToRra: true,
-    //     onBehalfOfAll: true,
-    //     tags: [],
-    //     dynamicPermissions: [
-    //       eventArgsPermissions.map((perm) => ({
-    //         appIdentifier: perm.resourceAppId,
-    //         scopes: [],
-    //         appRoles: perm.resourceAccess.map((a) => a.id),
-    //       })),
-    //     ],
-    //   },
-    // });
-
-    const response = await consentClient.sendRequest({
-      url: `https://main.iam.ad.ext.azure.com/api/RegisteredApplications/${application.appId}/Consent`,
-      method: "POST",
-      queryParameters: {
-        onBehalfOfAll: "true",
-      },
-    });
-    if (response.status !== 204) {
-      throw new Error(
-        `Granting admin consent failed: code ${response.status} - "${response.bodyAsText}".`,
-      );
-    }
-
-    eventEmitter.emit("afterAdminConsentGranted", {
-      application,
-      permissions: eventArgsPermissions,
-    });
   }
 };
 
@@ -355,10 +437,11 @@ const addToPatchablePermissions = (
   }
 };
 
-const graphAPIResultOf = <TType extends t.Mixed>(item: TType) =>
+const graphAPIListOf = <TType extends t.Mixed>(item: TType) =>
   t.type(
+    // Also typically has "@odata.context" attribute but
     {
-      value: item,
+      value: utils.listOf(item),
     },
     "APIResult",
   );

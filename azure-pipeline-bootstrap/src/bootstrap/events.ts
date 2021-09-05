@@ -22,13 +22,13 @@ export interface VirtualBootstrapEvents {
   }>;
   beforeApplicationHasEnoughPermissions: types.UpsertResult<{
     application: types.Application;
-    permissions: ReadonlyArray<types.ApplicationRequiredResourceAccess>;
+    permissionsToAssign: ReadonlyArray<types.ApplicationRequiredResourceAccess>;
     waitTimeInSecondsIfCreated: number;
   }>;
-  afterAdminConsentGranted: {
-    application: types.Application;
-    permissions: ReadonlyArray<types.ApplicationRequiredResourceAccess>;
-  };
+  beforeAdminConsentGranted: types.UpsertResult<{
+    servicePrincipal: types.ServicePrincipal;
+    permissionsToGrant: ReadonlyArray<types.ApplicationRequiredResourceAccess>;
+  }>;
 
   // ARM
   bootstrapperRoleAssignmentCreatedOrUpdated: AuthorizationManagementModels.RoleAssignment;
@@ -108,11 +108,11 @@ export const consoleLoggingBootstrapEventEmitterBuilder = (
 
   builder.addEventListener("beforeApplicationCredentialsExists", (arg) =>
     logger(
-      `Successfully ${
-        arg.createNew ? "created" : "configured"
-      } credentials with ID ${arg.credential.keyId} and thumbprint ${
+      `For app ${arg.application.id}, will${
+        arg.createNew ? "" : " not"
+      } create credentials with ID ${arg.credential.keyId} and thumbprint ${
         arg.credential.customKeyIdentifier
-      } for app ${arg.application.id}.${
+      }.${
         arg.createNew
           ? `\nWaiting ${arg.waitTimeInSecondsIfCreated} seconds for credentials to sync.`
           : ""
@@ -122,21 +122,23 @@ export const consoleLoggingBootstrapEventEmitterBuilder = (
 
   builder.addEventListener("beforeApplicationHasEnoughPermissions", (arg) =>
     logger(
-      `Successfully ${
-        arg.createNew ? "created" : "configured"
-      } permissions for app ${arg.application.id}: ${JSON.stringify(
-        arg.permissions,
-      )}.${
+      `For app ${arg.application.id}, will${
+        arg.createNew ? "" : " not"
+      } add permissons: ${JSON.stringify(arg.permissionsToAssign)}.${
         arg.createNew
-          ? `\nWaiting ${arg.waitTimeInSecondsIfCreated} seconds for permissions to sync.`
+          ? `\nWill wait ${arg.waitTimeInSecondsIfCreated} seconds for permissions to sync.`
           : ""
       }`,
     ),
   );
 
-  builder.addEventListener("afterAdminConsentGranted", (arg) =>
+  builder.addEventListener("beforeAdminConsentGranted", (arg) =>
     logger(
-      `Successfully granted admin consent for permissions of application ${arg.application.id}`,
+      `For SP ${arg.servicePrincipal.id}, will${
+        arg.createNew ? "" : " not"
+      } grant admin consent for permissions: ${JSON.stringify(
+        arg.permissionsToGrant,
+      )}.`,
     ),
   );
 

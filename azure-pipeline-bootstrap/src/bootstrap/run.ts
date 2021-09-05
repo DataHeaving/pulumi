@@ -82,33 +82,21 @@ const setupBootstrapperApp = async ({
   let bootstrapperCredentials: id.TokenCredential;
   let bootstrapperPulumiAuth: pulumiAzure.PulumiAzureBackendAuth;
   let spAuthStorageConfig: pulumiSetup.SPAuthStorageConfig | undefined;
-  // If we use AzureCLI auth, we must pass different kind of scope, because Azure CLI still uses ADAL-based v1 auth flow, while graph.Client uses MSAL-based v2 auth flow
-  // For more info, see: https://github.com/Azure/azure-cli/issues/12986#issuecomment-643955267
-  // And https://github.com/Azure/azure-sdk-for-net/issues/17696
-  // graph.Client does not cache tokens, so we have to do it ourselves.
-  // let graphToken: string | undefined;
   const graphClient = graph.Client.initWithMiddleware({
     authProvider: credentials,
-    // {
-    //   getAccessToken: async () =>
-    //     graphToken ??
-    //     (graphToken = await new TokenCredentialAuthenticationProvider(
-    //       credentials,
-    //       {
-    //         scopes: ["https://graph.microsoft.com/.default"], // AzureCliCredential will cut out the "/.default", so that legacy ADAL authentication library it uses will work
-    //       },
-    //     ).getAccessToken()),
-    // },
-    //  new TokenCredentialAuthenticationProvider(credentials, {
-    //   scopes: ["https://graph.microsoft.com/.default"], // AzureCliCredential will cut out the "/.default", so that legacy ADAL authentication library it uses will work
-    // }),
+
     debugLogging: true,
   });
   const envSpecificPipelineConfigReader: pulumi.EnvSpecificPipelineConfigReader =
-    {
-      principalId: await getCurrentPrincipalId(graphClient),
-      principalType: "User", // TODO how to get this meaningfully via Graph API, or should use some other trick? Maybe examine type of credentials via instanceof ? Only possible way for that to be user is if they are Cli/Device credentials
-    };
+    bootstrapperApp.type === "msi"
+      ? {
+          principalId: bootstrapperApp.principalId,
+          principalType: "MSI",
+        }
+      : {
+          principalId: await getCurrentPrincipalId(graphClient),
+          principalType: "User", // TODO how to get this meaningfully via Graph API, or should use some other trick? Maybe examine type of credentials via instanceof ? Only possible way for that to be user is if they are Cli/Device credentials
+        };
   switch (bootstrapperApp.type) {
     case "sp":
       {
@@ -126,7 +114,6 @@ const setupBootstrapperApp = async ({
         );
         const clientAndPrincipalID = await ad.ensureBootstrapSPIsConfigured({
           eventEmitter,
-          credentials,
           graphClient,
           bootstrapperApp,
           certificatePEM: certPEM,
