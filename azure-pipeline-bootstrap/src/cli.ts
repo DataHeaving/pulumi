@@ -14,8 +14,10 @@ import * as cmdConfig from "./cli-config";
 import * as program from ".";
 import * as pulumiSetup from "./bootstrap";
 
-// Command-line args:
-// [configPath, [doChanges="true"|"false", [...authKinds]]]
+/**
+ * Command-line args:
+ * [configPath, [doChanges="true"|"false", [...authKinds]]]
+ */
 const main = async () => {
   // Perform parsing arguments
   // We must do it sequentially in this order, as getDoChanges and getConfigPath may modify arg array
@@ -379,34 +381,6 @@ interface CredentialInfo {
   credential: common.ItemOrFactory<id.TokenCredential, [ReadonlyArray<string>]>;
   passGivenTokens: boolean;
 }
-
-// class TokenCacheBySingleScope implements id.TokenCredential {
-//   private readonly _cache: Record<string, Promise<id.AccessToken | null>>;
-//   public constructor(private readonly credentials: id.TokenCredential) {
-//     this._cache = {};
-//   }
-//   public getToken(
-//     scopes: common.OneOrMore<string>,
-//     options?: id.GetTokenOptions,
-//   ) {
-//     console.log("SCOPEZZ", scopes);
-//     const singleScope =
-//       typeof scopes === "string"
-//         ? scopes
-//         : scopes.length === 1
-//         ? scopes[0]
-//         : undefined;
-//     if (!singleScope) {
-//       throw new Error(
-//         "Token cache by single scope only accepts single scope as scope argument.",
-//       );
-//     }
-
-//     return common.getOrAddGeneric(this._cache, singleScope, (scope) =>
-//       this.credentials.getToken(scope, options),
-//     );
-//   }
-// }
 
 void (async () => {
   try {

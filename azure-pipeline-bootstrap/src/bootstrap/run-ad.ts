@@ -242,17 +242,15 @@ const getResourceSPMap = async (
           : await getSPByAppId(client, id),
       ),
     )
-  )
-    // .map((sp) => validation.decodeOrThrow(types.servicePrincipal.decode, sp))
-    .reduce<Record<string, types.ServicePrincipal>>((curMap, sp, idx) => {
-      if (!sp) {
-        throw new Error(
-          `Could not find service principal: ${JSON.stringify(ids[idx])}.`,
-        );
-      }
-      curMap[sp.appId] = sp; // In case of AAD, the appID will be the "00000002-0000-0000-c000-000000000000" UUID, which also is resourceAppId of types.ApplicationRequiredResourceAccess
-      return curMap;
-    }, {});
+  ).reduce<Record<string, types.ServicePrincipal>>((curMap, sp, idx) => {
+    if (!sp) {
+      throw new Error(
+        `Could not find service principal: ${JSON.stringify(ids[idx])}.`,
+      );
+    }
+    curMap[sp.appId] = sp; // In case of AAD, the appID will be the "00000002-0000-0000-c000-000000000000", which also is resourceAppId of types.ApplicationRequiredResourceAccess
+    return curMap;
+  }, {});
 
 const grantAdminConsent = async (
   eventEmitter: events.BootstrapEventEmitter,

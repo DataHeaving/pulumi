@@ -31,22 +31,27 @@
     "@azure/keyvault-keys": "^4.3.0",
     "@data-heaving/azure-kv-secret": "^1.0.0",
     "@data-heaving/common-validation": "^1.0.0",
-    "@data-heaving/pulumi-azure-pipeline": "^1.0.0",
-    "@data-heaving/pulumi-azure-pipeline-setup": "^1.1.1",
+    "@data-heaving/pulumi-azure-pipeline": "^1.1.0",
+    "@data-heaving/pulumi-azure-pipeline-setup": "^1.1.2",
     "@microsoft/microsoft-graph-client": "^3.0.0",
     "cross-fetch": "^3.1.4"
   },
   "devDependencies": {
     "@azure/arm-authorization": "^8.4.1",
     "@azure/identity": "^1.5.1",
+    "@azure/arm-resources": "^4.2.1",
+    "@azure/arm-storage": "^16.1.1",
+    "@azure/arm-keyvault-profile-2020-09-01-hybrid": "^1.1.1",
+    "@azure/keyvault-secrets": "^4.3.0",
+    "@azure/keyvault-keys": "^4.3.0",
     "@data-heaving/azure-kv-secret": "^1.0.0",
     "@data-heaving/common": "^1.0.0",
     "@data-heaving/common-validation": "^1.0.0",
     "@data-heaving/pulumi-automation": "^1.0.0",
     "@data-heaving/pulumi-azure": "^1.0.1",
-    "@data-heaving/pulumi-azure-pipeline": "^1.0.0",
+    "@data-heaving/pulumi-azure-pipeline": "^1.1.0",
     "@data-heaving/pulumi-azure-pipeline-config": "^1.0.0",
-    "@data-heaving/pulumi-azure-pipeline-setup": "^1.1.1",
+    "@data-heaving/pulumi-azure-pipeline-setup": "^1.1.2",
     "@microsoft/microsoft-graph-client": "^3.0.0",
     "@pulumi/azure-native": "1.24.0",
     "@pulumi/azuread": "^4.3.0",
@@ -61,6 +66,8 @@
     "eslint": "7.32.0",
     "eslint-config-prettier": "8.3.0",
     "eslint-plugin-prettier": "4.0.0",
+    "fp-ts": "^2.9.5",
+    "io-ts": "^2.2.15",
     "nyc":"15.1.0",
     "prettier": "2.3.2",
     "typescript": "4.4.2"
@@ -72,6 +79,10 @@
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/cjs/index.d.ts",
+  "bin": {
+    "pulumi-azure-pipeline-bootstrap": "./dist/cjs/cli.js",
+    "pulumi-azure-pipeline-bootstrap-esm": "./dist/esm/cli.js"
+  },
   "ava": {
     "files": [
       "dist/cjs/**/tests/*.spec.js"

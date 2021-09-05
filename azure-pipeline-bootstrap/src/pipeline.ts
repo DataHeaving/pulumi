@@ -66,7 +66,6 @@ export type BootstrapperAppSP = Omit<
 };
 export type BootstrapperAppMSI = bootstrap.BootstrapperAppMSI;
 
-// TODO clean up cert files when done
 export const main = async ({
   eventEmitters,
   doChanges,
