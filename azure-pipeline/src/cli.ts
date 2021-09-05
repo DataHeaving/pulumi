@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import * as pulumi from "@pulumi/pulumi/automation";
 import * as validation from "@data-heaving/common-validation";
 import * as pulumiAzure from "@data-heaving/pulumi-azure";
@@ -42,6 +43,15 @@ export const main = async () => {
   const envVarName =
     config?.pipelineConfigEnvName ?? cliConfig.defaultPipelineConfigEnvName;
   return await functionality.runPulumiPipelineFromConfig({
+    // Log to console
+    eventEmitters: {
+      initCommandEventEmitter: pulumiAutomation
+        .consoleLoggingInitEventEmitterBuilder()
+        .createEventEmitter(),
+      runCommandEventEmitter: pulumiAutomation
+        .consoleLoggingRunEventEmitterBuilder()
+        .createEventEmitter(),
+    },
     config: validation.decodeOrThrow(
       cliConfig.pipelineConfiguration.decode,
       JSON.parse(

@@ -3,7 +3,6 @@ import { KeyVaultManagementModels } from "@azure/arm-keyvault-profile-2020-09-01
 import { ResourceManagementModels } from "@azure/arm-resources";
 import { StorageManagementModels } from "@azure/arm-storage";
 import { KeyVaultKey } from "@azure/keyvault-keys";
-import { KeyVaultSecret } from "@azure/keyvault-secrets";
 import * as common from "@data-heaving/common";
 import * as types from "./types";
 
@@ -26,6 +25,10 @@ export interface VirtualBootstrapEvents {
     permissions: ReadonlyArray<types.ApplicationRequiredResourceAccess>;
     waitTimeInSecondsIfCreated: number;
   }>;
+  afterAdminConsentGranted: {
+    application: types.Application;
+    permissions: ReadonlyArray<types.ApplicationRequiredResourceAccess>;
+  };
 
   // ARM
   bootstrapperRoleAssignmentCreatedOrUpdated: AuthorizationManagementModels.RoleAssignment;
@@ -40,13 +43,16 @@ export interface VirtualBootstrapEvents {
   keyVaultAuthenticationSecretRoleAssignmentCreatedOrUpdated: AuthorizationManagementModels.RoleAssignment;
 
   // KV
-  keyCreatedOrUpdated: KeyVaultKey;
-  authenticationSecretCreatedOrUpdated: KeyVaultSecret;
+  keyCreatedOrUpdated: types.UpsertResult<{ key: KeyVaultKey }>;
+  authenticationSecretCreatedOrUpdated: types.UpsertResult<{
+    secretName: string;
+    secretValue: string;
+  }>;
 }
 
 export type CredentialInfo = Pick<
   types.ApplicationCredential,
-  "key" | "keyId" | "type" | "usage"
+  "key" | "keyId" | "type" | "usage" | "customKeyIdentifier"
 >;
 
 export type BootstrapEventEmitter = common.EventEmitter<VirtualBootstrapEvents>;
@@ -67,6 +73,18 @@ export const consoleLoggingBootstrapEventEmitterBuilder = (
     logMessagePrefix,
     consoleAbstraction,
   );
+
+  const logRoleAssignment = (
+    assignment: AuthorizationManagementModels.RoleAssignment,
+    description: string,
+  ) =>
+    logger(
+      `Successfully assigned ${description}: ${assignment.principalId} (${
+        assignment.principalType
+      }) to role ${lastItem(
+        assignment.roleDefinitionId?.split("/"),
+      )} on scope ${assignment.scope}`,
+    );
 
   builder.addEventListener("afterADApplicationExists", (arg) =>
     logger(
@@ -92,9 +110,9 @@ export const consoleLoggingBootstrapEventEmitterBuilder = (
     logger(
       `Successfully ${
         arg.createNew ? "created" : "configured"
-      } credentials with ID "${arg.credential.keyId}" for app ${
-        arg.application.id
-      }.${
+      } credentials with ID ${arg.credential.keyId} and thumbprint ${
+        arg.credential.customKeyIdentifier
+      } for app ${arg.application.id}.${
         arg.createNew
           ? `\nWaiting ${arg.waitTimeInSecondsIfCreated} seconds for credentials to sync.`
           : ""
@@ -116,5 +134,125 @@ export const consoleLoggingBootstrapEventEmitterBuilder = (
     ),
   );
 
+  builder.addEventListener("afterAdminConsentGranted", (arg) =>
+    logger(
+      `Successfully granted admin consent for permissions of application ${arg.application.id}`,
+    ),
+  );
+
+  builder.addEventListener(
+    "bootstrapperRoleAssignmentCreatedOrUpdated",
+    (arg) => logRoleAssignment(arg, "bootstrapper app resource privileges"),
+  );
+
+  builder.addEventListener("resourceGroupCreatedOrUpdated", (arg) =>
+    logger(`Processed resource group "${arg.name}" to "${arg.location}".`),
+  );
+
+  builder.addEventListener("storageAccountCreatedOrUpdated", (arg) =>
+    logger(`Processed storage account ${arg.name}.`),
+  );
+
+  builder.addEventListener("storageAccountBlobServicesConfigured", (arg) =>
+    logger(
+      `Configured storage account blob services: ${JSON.stringify(
+        pick(
+          arg,
+          "isVersioningEnabled",
+          "deleteRetentionPolicy",
+          "cors",
+          "containerDeleteRetentionPolicy",
+          "restorePolicy",
+          "sku",
+        ),
+      )}`,
+    ),
+  );
+
+  builder.addEventListener("storageAccountContainerCreatedOrUpdated", (arg) =>
+    logger(
+      `Processed storage account container ${JSON.stringify(
+        pick(arg, "name", "publicAccess"),
+      )}`,
+    ),
+  );
+
+  builder.addEventListener("keyVaultCreatedOrUpdated", (arg) =>
+    logger(
+      `Processed key vault ${JSON.stringify(
+        Object.assign(
+          pick(arg, "name"),
+          pick(
+            arg.properties,
+            "sku",
+            "enablePurgeProtection",
+            "enableRbacAuthorization",
+            "enableSoftDelete",
+            "enabledForDeployment",
+            "enabledForDiskEncryption",
+            "enabledForTemplateDeployment",
+            "softDeleteRetentionInDays",
+          ),
+        ),
+      )}`,
+    ),
+  );
+
+  builder.addEventListener(
+    "keyVaultAdminRoleAssignmentCreatedOrUpdated",
+    (arg) => logRoleAssignment(arg, "bootstrapper app KV privileges"),
+  );
+
+  builder.addEventListener(
+    "keyVaultAuthenticationSecretRoleAssignmentCreatedOrUpdated",
+    (arg) =>
+      logRoleAssignment(arg, "bootstrapper app auth retriever privileges"),
+  );
+
+  builder.addEventListener("keyCreatedOrUpdated", ({ createNew, key }) =>
+    logger(
+      `Successfully ${createNew ? "created" : "retrieved"} key vault key "${
+        key.name
+      }" of type "${key.keyType}" having ${
+        (key.key?.n?.byteLength ?? 0) * 8
+      } bits.`,
+    ),
+  );
+
+  builder.addEventListener(
+    "authenticationSecretCreatedOrUpdated",
+    ({ createNew, secretName }) =>
+      logger(
+        `Successfully ${
+          createNew ? "set" : "ensured existence of "
+        } key vault secret "${secretName}"`,
+      ),
+  );
+
   return builder;
 };
+
+const lastItem = <T>(array: ReadonlyArray<T> | undefined) =>
+  array?.[array.length - 1];
+
+// From https://stackoverflow.com/a/56592365
+// TODO move these to @data-heaving/common
+const pick = <T, TKey extends keyof T>(
+  obj: T | undefined,
+  ...keys: ReadonlyArray<TKey>
+) =>
+  (obj
+    ? Object.fromEntries(
+        keys.filter((key) => key in obj).map((key) => [key, obj[key]]),
+      )
+    : {}) as Partial<Pick<T, TKey>>;
+
+// const inclusivePick = <T, TKey extends keyof T>(
+//   obj: T,
+//   ...keys: ReadonlyArray<TKey>
+// ) => Object.fromEntries(keys.map((key) => [key, obj[key]])) as Pick<T, TKey>;
+
+// const omit = <T, TKey extends keyof T>(obj: T, ...keys: ReadonlyArray<TKey>) =>
+//   Object.fromEntries(
+//     Object.entries(obj).filter(([key]) => !keys.includes(key as TKey)),
+//   ) as Omit<T, TKey>;

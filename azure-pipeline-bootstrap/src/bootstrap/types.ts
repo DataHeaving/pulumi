@@ -1,5 +1,10 @@
 import * as t from "io-ts";
 import * as validation from "@data-heaving/common-validation";
+import * as id from "@azure/identity";
+import * as graph from "@microsoft/microsoft-graph-client";
+
+export type BootstrappingCredentials = id.TokenCredential &
+  graph.AuthenticationProvider;
 
 export type UpsertResult<T> = T & {
   createNew: boolean;
@@ -22,7 +27,7 @@ export type ApplicationRequiredResourceAccess = t.TypeOf<
   typeof applicationRequiredResourceAccess
 >;
 
-export const applicationCredential = t.type(
+export const applicationKeyCredential = t.type(
   {
     customKeyIdentifier: validation.nonEmptyString, // TODO hex string
     displayName: t.string,
@@ -40,7 +45,7 @@ export const applicationCredential = t.type(
   "KeyCredential",
 );
 
-export type ApplicationCredential = t.TypeOf<typeof applicationCredential>;
+export type ApplicationCredential = t.TypeOf<typeof applicationKeyCredential>;
 
 export const application = t.type(
   {
@@ -48,12 +53,12 @@ export const application = t.type(
     id: validation.uuid,
     appId: validation.uuid,
     displayName: t.string,
-    keyCredentials: t.array(applicationCredential),
+    keyCredentials: t.array(applicationKeyCredential),
     requiredResourceAccess: t.array(
       applicationRequiredResourceAccess,
       "RequiredResourceAccessList",
     ),
-    // And many others
+    // And many others (e.g. passwordCredentials, but we don't use that (otherwise same as key credential, but without 'type' and 'usage', and 'hint' and 'secretText' instead ('secretText' and 'customKeyIdentifier' always null)))
   },
   "Application",
 );
@@ -73,3 +78,6 @@ export const servicePrincipal = t.type(
 );
 
 export type ServicePrincipal = t.TypeOf<typeof servicePrincipal>;
+
+export const OAUTH_SCOPE_ADMIN_CONSENT =
+  "74658136-14ec-4630-ad9b-26e160ff0fc6/.default"; // This UUID corresponds to scope "https://main.iam.ad.ext.azure.com"

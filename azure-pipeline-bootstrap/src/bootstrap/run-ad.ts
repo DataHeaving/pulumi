@@ -1,20 +1,20 @@
 import * as graph from "@microsoft/microsoft-graph-client";
 import * as rest from "@azure/ms-rest-js";
-import * as auth from "@azure/core-auth";
+import * as id from "@azure/identity";
 import * as t from "io-ts";
 import * as validation from "@data-heaving/common-validation";
-import * as utils from "@data-heaving/common";
+import * as common from "@data-heaving/common";
 import * as crypto from "crypto";
 import * as uuid from "uuid";
 import * as types from "./types";
 import * as events from "./events";
-import * as common from "./run-common";
+import * as utils from "./run-common";
 import * as certs from "./run-certs";
 import { isDeepStrictEqual } from "util";
 
 export interface Inputs {
   eventEmitter: events.BootstrapEventEmitter;
-  credentials: auth.TokenCredential;
+  credentials: id.TokenCredential;
   graphClient: graph.Client;
   bootstrapperApp: {
     displayName: string;
@@ -73,7 +73,7 @@ const ensureBootstrapperAppExists = async (
 ) => {
   const api = client.api("/applications");
   const existingApp = validation.decodeOrThrow(
-    graphAPIResultOf(common.listOf(types.application)).decode,
+    graphAPIResultOf(utils.listOf(types.application)).decode,
     await api.filter(`displayName eq '${bootstrapperAppName}'`).get(),
   ).value[0];
   const application =
@@ -98,7 +98,7 @@ const ensureBootstrapperSPExists = async (
 ) => {
   const api = client.api("/servicePrincipals");
   const existingSP = validation.decodeOrThrow(
-    graphAPIResultOf(common.listOf(types.servicePrincipal)).decode,
+    graphAPIResultOf(utils.listOf(types.servicePrincipal)).decode,
     await api.filter(`appId eq '${bootstrapperAppId}'`).get(),
   ).value[0];
   const servicePrincipal =
@@ -151,28 +151,33 @@ const ensureCertificateAuthenticationExists = async (
     usage: "Verify",
     keyId: uuid.v4(),
     key: Buffer.from(certificatePem).toString("base64"),
+    customKeyIdentifier,
   };
   const waitTimeInSecondsIfCreated = 120; // Sometimes even 60-90sec doesn't work... AAD be ridicilously slow.
   eventEmitter.emit("beforeApplicationCredentialsExists", {
     application,
-    credential: utils.deepCopy(credential),
+    credential: Object.fromEntries(
+      Object.entries(credential),
+    ) as events.CredentialInfo, // This will fail because of bug in @data-heaving/common v1.0.0: common.deepCopy(credential),
     createNew,
     waitTimeInSecondsIfCreated,
   });
   if (createNew) {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { customKeyIdentifier: _, ...credentialToPassToApi } = credential;
     // Please notice, the tricky part about /applications/${appId}/addKey, from https://docs.microsoft.com/en-us/graph/api/application-addkey?view=graph-rest-1.0&tabs=javascript
     // "Applications that don’t have any existing valid certificates (no certificates have been added yet, or all certificates have expired), won’t be able to use this service action. You can use the Update application operation to perform an update instead."
     await client.api(`/applications/${id}`).patch({
-      keyCredentials: [...keyCredentials, credential],
+      keyCredentials: [...keyCredentials, credentialToPassToApi],
     });
     // We must wait some time to let the AAD eventually consistent DB to catch up - if we don't do this, we will get an error when we try to sign in with SP right after this
-    await utils.sleep(waitTimeInSecondsIfCreated * 1000);
+    await common.sleep(waitTimeInSecondsIfCreated * 1000);
   }
 };
 
 const ensureAppHasSufficientPermissions = async (
   eventEmitter: events.BootstrapEventEmitter,
-  credentials: auth.TokenCredential,
+  credentials: id.TokenCredential,
   bootstrapperWillNeedToCreateAADApps: boolean,
   client: graph.Client,
   application: types.Application,
@@ -203,9 +208,11 @@ const ensureAppHasSufficientPermissions = async (
     );
     const createNew = patchableAccess.length > 0;
     const waitTimeInSecondsIfCreated = 60;
+    const eventArgsPermissions =
+      application.requiredResourceAccess.concat(patchableAccess);
     eventEmitter.emit("beforeApplicationHasEnoughPermissions", {
       application,
-      permissions: utils.deepCopy(patchableAccess),
+      permissions: eventArgsPermissions,
       createNew,
       waitTimeInSecondsIfCreated,
     });
@@ -214,48 +221,56 @@ const ensureAppHasSufficientPermissions = async (
       await client.api(`/applications/${id}`).patch({
         requiredResourceAccess: patchableAccess,
       });
-      await utils.sleep(waitTimeInSecondsIfCreated * 1000);
+      await common.sleep(waitTimeInSecondsIfCreated * 1000);
     }
 
-    // This is same way as used by Azure CLI
-    // Azure Portal uses https://graph.windows.net/myorganization/consentToApp endpoint, but trying getting access token for that and sending request results in error: Authentication_MissingOrMalformed
-    //
-    // I suspect it is because of JTW token problems:
-    // I am not sure how to acquire JWT token, used by Portal, with BOTH:
-    // - "aud" claim set to https://graph.windows.net, AND
-    // - "scp" claim set to "user_impersonation"
-    //
-    // Using "az account get-access-token --resource https://graph.windows.net" will result in correct "aud" claim, but incorrect "scp" claim
-    // Using "az account get-access-token --resource 74658136-14ec-4630-ad9b-26e160ff0fc6" will result in correct "scp" claim, but incorrect "aud" claim.
-    // Therefore, instead of using AAD Graph API, let's use this hidden main.iam.ad.ext.azure.com one.
     const consentClient = new rest.ServiceClient(
       new rest.AzureIdentityCredentialAdapter(
         credentials,
-        "74658136-14ec-4630-ad9b-26e160ff0fc6", // This UUID corresponds to scope "https://main.iam.ad.ext.azure.com"
+        types.OAUTH_SCOPE_ADMIN_CONSENT,
       ),
     );
+    // Using this will for some reason give "The specified api-version is invalid." error. Also, we probably need to convert resource access GUIDs to strings in dynamicPermissions, which would be a bit PITA.
+    // Instead, use the same method as used in Azure CLI
+    // const response = await consentClient.sendRequest({
+    //   url: "https://graph.windows.net/myorganization/consentToApp",
+    //   method: "POST",
+    //   queryParameters: {
+    //     ["api-version"]: "2.0",
+    //   },
+    //   body: {
+    //     checkOnly: false,
+    //     clientAppId: application.appId,
+    //     constraintToRra: true,
+    //     onBehalfOfAll: true,
+    //     tags: [],
+    //     dynamicPermissions: [
+    //       eventArgsPermissions.map((perm) => ({
+    //         appIdentifier: perm.resourceAppId,
+    //         scopes: [],
+    //         appRoles: perm.resourceAccess.map((a) => a.id),
+    //       })),
+    //     ],
+    //   },
+    // });
 
     const response = await consentClient.sendRequest({
-      url: `https://main.iam.ad.ext.azure.com/api/RegisteredApplications/${application.appId}/Consent`, // "https://graph.windows.net/myorganization/consentToApp"
+      url: `https://main.iam.ad.ext.azure.com/api/RegisteredApplications/${application.appId}/Consent`,
       method: "POST",
       queryParameters: {
-        //["api-version"]: "2.0",
         onBehalfOfAll: "true",
       },
-      // body: {
-      //   checkOnly: true,
-      //   clientAppId: app.appId,
-      //   constraintToRra: true,
-      //   onBehalfOfAll: true,
-      //   tags: [],
-      //   dynamicPermissions: [],
-      // },
     });
     if (response.status !== 204) {
       throw new Error(
         `Granting admin consent failed: code ${response.status} - "${response.bodyAsText}".`,
       );
     }
+
+    eventEmitter.emit("afterAdminConsentGranted", {
+      application,
+      permissions: eventArgsPermissions,
+    });
   }
 };
 
@@ -276,8 +291,8 @@ const createPatchableRequiredAccessArray = (
     );
   }
   const patchableAccess: Array<types.ApplicationRequiredResourceAccess> = [];
-  if (existingPermissions.length > 0) {
-    const deduplicatedAdditionalPermissions = utils.deduplicate(
+  if (permissionAddInfos.length > 0) {
+    const deduplicatedAdditionalPermissions = common.deduplicate(
       permissionAddInfos,
       ({ indexToRemove }) => `${indexToRemove}`,
     );

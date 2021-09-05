@@ -1,6 +1,9 @@
+#!/usr/bin/env node
 import * as id from "@azure/identity";
-import * as utils from "@data-heaving/common";
+import * as graph from "@microsoft/microsoft-graph-client";
+import * as common from "@data-heaving/common";
 import * as validation from "@data-heaving/common-validation";
+import * as pulumiAutomation from "@data-heaving/pulumi-automation";
 import { argv, env, stdin } from "process";
 import * as fs from "fs/promises";
 import * as os from "os";
@@ -12,13 +15,13 @@ import * as program from ".";
 import * as pulumiSetup from "./bootstrap";
 
 // Command-line args:
-// [doChanges="true"|"false", [configPath, [...authKinds]]]
+// [configPath, [doChanges="true"|"false", [...authKinds]]]
 const main = async () => {
   // Perform parsing arguments
   // We must do it sequentially in this order, as getDoChanges and getConfigPath may modify arg array
   const args = argv.slice(2); // First two are: "(ts-)node" and "src/commandline"
-  const doChanges = getDoChanges(args);
   const configPath = getConfigPath(args);
+  const doChanges = getDoChanges(args);
   const authentications = validation.decodeOrThrow(
     cmdConfig.authenticationKinds.decode,
     args,
@@ -28,33 +31,16 @@ const main = async () => {
     authentications.push("env", "cli", "msi", "device");
   }
 
-  const credentials = new id.ChainedTokenCredential(
-    ...utils
-      .deduplicate(authentications, (a) => a)
-      .map((authentication) => {
-        switch (authentication) {
-          case "device":
-            return new id.DeviceCodeCredential();
-          case "env":
-            return new id.EnvironmentCredential();
-          case "cli":
-            return new id.AzureCliCredential();
-          case "msi":
-            return new id.ManagedIdentityCredential();
-        }
-      }),
+  const { credentials, tempDir, programConfig } = await loadConfig(
+    authentications,
+    configPath,
   );
-
-  const { tempDir, programConfig } = await loadConfig(credentials, configPath);
   try {
-    await program.main(
-      {
-        credentials,
-        doChanges,
-        ...programConfig,
-      },
-      undefined, // Pass undefined as event emitters value, in order for output to go to console
-    );
+    await program.main({
+      credentials,
+      doChanges,
+      ...programConfig,
+    });
   } finally {
     if (tempDir) {
       await fs.rm(tempDir, { recursive: true });
@@ -97,21 +83,26 @@ const getConfigPath = (args: Array<string>) => {
 };
 
 const loadConfig = async (
-  credentials: id.TokenCredential,
+  authenticationKinds: ReadonlyArray<cmdConfig.AuthenticationKind>,
   configPath: string,
 ) => {
-  const { bootstrapperApp, ...parsed } = validation.decodeOrThrow(
+  const fullConfig = validation.decodeOrThrow(
     cmdConfig.config.decode,
     JSON.parse(await readFromFileOrStdin(configPath)),
   );
+  const credentials = getCredentials(authenticationKinds, fullConfig);
+  const { bootstrapperApp: bootstrapperAppParsed, ...parsed } = fullConfig;
+  const { azure, organization } = parsed;
+
   const {
     pulumiEncryptionKeyBitsForBootstrapper,
     pulumiEncryptionKeyBitsForEnvSpecificPipeline,
   } = parsed.pulumi || {};
-  let programConfig: Omit<program.Inputs, "credentials" | "doChanges">;
   let tempDir: string | undefined;
-  if (bootstrapperApp.type === "sp") {
-    const { authentication, envSpecificPulumiPipelineSPAuth } = bootstrapperApp;
+  let bootstrapperApp: program.BootstrapperApp;
+  if (bootstrapperAppParsed.type === "sp") {
+    const { authentication, envSpecificPulumiPipelineSPAuth } =
+      bootstrapperAppParsed;
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "pulumi-bootstrap-"));
     const keyAndCertPaths = {
       keyPath: path.join(tempDir, `key-${uuid.v4()}.pem`),
@@ -122,12 +113,18 @@ const loadConfig = async (
     try {
       keyAndCertPEM = await pulumiSetup.tryGetSecretValue(credentials, {
         kvURL: `https://${pulumiSetup.constructVaultName(
-          parsed.organization.name,
+          organization.name,
         )}.vault.azure.net`,
         secretName: pulumiSetup.constructBootstrapperAppAuthSecretName(),
       });
-    } catch {
-      // Ignore
+    } catch (e) {
+      if (
+        e instanceof id.CredentialUnavailable ||
+        e instanceof id.AggregateAuthenticationError
+      ) {
+        throw e;
+      }
+      // Ignore otherwise
     }
 
     if (keyAndCertPEM) {
@@ -141,82 +138,281 @@ const loadConfig = async (
     }
 
     const pwEnvName = authentication.pfxPasswordEnvName;
-    programConfig = {
-      ...parsed,
-      organization: constructOrganizationObject(parsed),
-      bootstrapperApp: {
-        ...bootstrapperApp,
-        authentication: {
-          ...authentication,
-          tempDir,
-          ...keyAndCertPaths,
-          pfxPassword: (pwEnvName ? env[pwEnvName] : undefined) ?? "",
-          rsaBits: authentication.rsaBits ?? 4096,
-          certValidityPeriodDays: authentication.certValidityPeriodDays ?? 7000, // A bit under 10 years
-        },
-        envSpecificPulumiPipelineSPAuth: envSpecificPulumiPipelineSPAuth
-          ? {
-              ...envSpecificPulumiPipelineSPAuth,
-              rsaBits: envSpecificPulumiPipelineSPAuth?.rsaBits ?? 4096,
-              validityHours:
-                envSpecificPulumiPipelineSPAuth?.validityHours ?? 90000, // A bit over 10yrs
-            }
-          : undefined,
+    bootstrapperApp = {
+      ...bootstrapperAppParsed,
+      authentication: {
+        ...authentication,
+        tempDir,
+        ...keyAndCertPaths,
+        pfxPassword: (pwEnvName ? env[pwEnvName] : undefined) ?? "",
+        rsaBits: authentication.rsaBits ?? 4096,
+        certValidityPeriodDays: authentication.certValidityPeriodDays ?? 7000, // A bit under 10 years
       },
-      pipelineConfigs: constructPulumiPipelineConfigs(
-        pulumiEncryptionKeyBitsForBootstrapper,
-        pulumiEncryptionKeyBitsForEnvSpecificPipeline,
-      ),
+      envSpecificPulumiPipelineSPAuth: envSpecificPulumiPipelineSPAuth
+        ? {
+            ...envSpecificPulumiPipelineSPAuth,
+            rsaBits: envSpecificPulumiPipelineSPAuth?.rsaBits ?? 4096,
+            validityHours:
+              envSpecificPulumiPipelineSPAuth?.validityHours ?? 90000, // A bit over 10yrs
+          }
+        : undefined,
     };
   } else {
-    programConfig = {
-      ...parsed,
-      organization: constructOrganizationObject(parsed),
-      bootstrapperApp,
-      pipelineConfigs: constructPulumiPipelineConfigs(
-        pulumiEncryptionKeyBitsForBootstrapper,
-        pulumiEncryptionKeyBitsForEnvSpecificPipeline,
-      ),
-    };
+    bootstrapperApp = bootstrapperAppParsed;
   }
 
+  const { subscriptionId } = azure;
+  const programConfig: Omit<program.Inputs, "credentials" | "doChanges"> = {
+    ...parsed,
+    bootstrapperApp,
+    organization: {
+      ...organization,
+      environments: organization.environments.map((envNameOrConfig) =>
+        typeof envNameOrConfig === "string"
+          ? {
+              name: envNameOrConfig,
+              subscriptionId,
+            }
+          : {
+              ...envNameOrConfig,
+              subscriptionId: envNameOrConfig.subscriptionId ?? subscriptionId,
+            },
+      ),
+    },
+    pipelineConfigs: {
+      pulumiEncryptionKeyBitsForBootstrapper:
+        pulumiEncryptionKeyBitsForBootstrapper ?? 4096,
+      pulumiEncryptionKeyBitsForEnvSpecificPipeline:
+        pulumiEncryptionKeyBitsForEnvSpecificPipeline ?? 4096,
+    },
+    eventEmitters: {
+      pipelineEventEmitter: program
+        .consoleLoggingBootstrapPipelineEventEmitterBuilder()
+        .createEventEmitter(),
+      bootstrapEventEmitter: program
+        .consoleLoggingBootstrapEventEmitterBuilder()
+        .createEventEmitter(),
+      pulumiEventEmitters: {
+        initCommandEventEmitter: pulumiAutomation
+          .consoleLoggingInitEventEmitterBuilder()
+          .createEventEmitter(),
+        runCommandEventEmitter: pulumiAutomation
+          .consoleLoggingRunEventEmitterBuilder()
+          .createEventEmitter(),
+      },
+    },
+  };
+
   return {
+    credentials,
     programConfig,
     tempDir,
   };
 };
 
-const constructPulumiPipelineConfigs = (
-  pulumiEncryptionKeyBitsForBootstrapper:
-    | cmdConfig.PulumiPipelineEncryptionKeyBits
-    | undefined,
-  pulumiEncryptionKeyBitsForEnvSpecificPipeline:
-    | cmdConfig.PulumiPipelineEncryptionKeyBits
-    | undefined,
-) => ({
-  pulumiEncryptionKeyBitsForBootstrapper:
-    pulumiEncryptionKeyBitsForBootstrapper ?? 4096,
-  pulumiEncryptionKeyBitsForEnvSpecificPipeline:
-    pulumiEncryptionKeyBitsForEnvSpecificPipeline ?? 4096,
-});
+const OAUTH_SCOPE_MICROSOFT_GRAPH = "https://graph.microsoft.com/.default";
 
-const constructOrganizationObject = ({
-  organization,
-  azure: { subscriptionId },
-}: Pick<cmdConfig.Config, "organization" | "azure">): program.Organization => ({
-  ...organization,
-  environments: organization.environments.map((envNameOrConfig) =>
-    typeof envNameOrConfig === "string"
-      ? {
-          name: envNameOrConfig,
-          subscriptionId,
+const getCredentials = (
+  authenticationKinds: ReadonlyArray<cmdConfig.AuthenticationKind>,
+  {
+    azure,
+    bootstrapperApp,
+  }: Pick<cmdConfig.Config, "azure" | "bootstrapperApp">,
+) => {
+  const credentialsInAttemptOrder = common
+    .deduplicate(authenticationKinds, (a) => a)
+    .map((authentication) => {
+      switch (authentication) {
+        case "device":
+          // Because id.DeviceCodePromptCallback does not expose current scope, we have to do it like this
+          return (scopes: ReadonlyArray<string>) =>
+            new id.DeviceCodeCredential(
+              azure.tenantId, // Supply tenant ID, otherwise will get errors about app + tenant id not being linked
+              undefined, // Use Azure CLI client ID
+              ({ message }) =>
+                // eslint-disable-next-line no-console
+                console.log(
+                  `${message} (for scope${scopes.length > 1 ? "s" : ""}: ${
+                    scopes.length === 1
+                      ? `"${scopes[0]}"`
+                      : scopes.map((scope) => `"${scope}"`).join(", ")
+                  })`,
+                ),
+            );
+        case "env":
+          return new id.EnvironmentCredential();
+        case "cli":
+          return new id.AzureCliCredential();
+        case "msi":
+          return new id.ManagedIdentityCredential();
+      }
+    });
+  return new ChainedCachingTokenFixedScopesCredential(
+    credentialsInAttemptOrder.map((credential) => ({
+      credential,
+      passGivenTokens: true, // Currently can only handle 1 scope at a time, otherwise will get error from OAuth endpoint "AADSTS70011: The provided request must include a 'scope' input parameter. The provided value for the input parameter 'scope' is not valid. The scope <scope list> openid profile offline_access is not valid. static scope limit exceeded."
+    })),
+    [
+      "https://management.azure.com/.default", // For role assignment for bootstrapper app
+    ].concat(
+      bootstrapperApp.type === "msi"
+        ? []
+        : [
+            "https://vault.azure.net/.default", // For checking for existing bootstrapper app cert config
+            OAUTH_SCOPE_MICROSOFT_GRAPH, // For creating and setting up bootstrapper SP in AAD
+          ].concat(
+            bootstrapperApp.envSpecificPulumiPipelineSPAuth
+              ? [
+                  pulumiSetup.OAUTH_SCOPE_ADMIN_CONSENT, // For doing admin grant consent if bootstrapper SP will need to create other AAD SPs
+                ]
+              : [],
+          ),
+    ),
+  );
+};
+
+/**
+ * We are using multiple client libs and scopes during first stage of bootstrapping.
+ * The libs nor the id.XYZCredential classes do not cache the token -> we have to do it ourselves to avoid prompting for device code multiple times when using id.DeviceCodeCredential.
+ */
+class ChainedCachingTokenFixedScopesCredential
+  implements id.TokenCredential, graph.AuthenticationProvider
+{
+  private _credentials: ReadonlyArray<
+    CredentialInfo & {
+      errorOrToken: Record<string, Error | id.AccessToken>; // TODO maybe have this as: Record<string, id.AccessToken> | Error, in order to re-querying all previous credentials on scope change... ?
+    }
+  >;
+  public constructor(
+    credentials: ReadonlyArray<CredentialInfo>,
+    private readonly scopes: ReadonlyArray<string>,
+  ) {
+    this._credentials = credentials.map((cred) => ({
+      ...cred,
+      errorOrToken: {},
+    }));
+  }
+
+  public getToken(
+    scopes: common.OneOrMore<string>,
+    options?: id.GetTokenOptions,
+  ) {
+    this.checkScopesFromArgs(scopes);
+    // Pass given scopes in case they are used (e.g. AzureCLICredentials only supports one scope)
+    return this.doGetToken(
+      options,
+      typeof scopes === "string" ? [scopes] : scopes,
+    );
+  }
+
+  public async getAccessToken(
+    authenticationProviderOptions?: graph.AuthenticationProviderOptions,
+  ) {
+    this.checkScopesFromArgs(authenticationProviderOptions?.scopes ?? []);
+    // This is used by graph.Client -> pass graph scope if override needed
+    return (
+      await this.doGetToken(
+        undefined,
+        authenticationProviderOptions?.scopes ?? [OAUTH_SCOPE_MICROSOFT_GRAPH],
+      )
+    ).token;
+  }
+
+  private async doGetToken(
+    options: id.GetTokenOptions | undefined,
+    overrideScopes: ReadonlyArray<string>,
+  ) {
+    let retVal: id.AccessToken | null = null;
+    for (const credentialInfo of this._credentials) {
+      const { errorOrToken, passGivenTokens } = credentialInfo;
+      const currentScopes = passGivenTokens ? overrideScopes : this.scopes;
+      const key = currentScopes.join(" ");
+      const existing = errorOrToken[key];
+      if (!(existing instanceof Error)) {
+        if (typeof existing === "object") {
+          retVal = existing;
+        } else {
+          let acquiredTokenOrError: id.AccessToken | Error;
+          const credential = credentialInfo.credential;
+          try {
+            acquiredTokenOrError =
+              (await (typeof credential === "function"
+                ? credential(currentScopes)
+                : credential
+              ).getToken([...currentScopes], options)) ??
+              new Error("Returned token was null");
+          } catch (e) {
+            acquiredTokenOrError = e instanceof Error ? e : new Error(`${e}`);
+          }
+          errorOrToken[key] = acquiredTokenOrError;
+          if (!(acquiredTokenOrError instanceof Error)) {
+            retVal = acquiredTokenOrError;
+          }
         }
-      : {
-          ...envNameOrConfig,
-          subscriptionId: envNameOrConfig.subscriptionId ?? subscriptionId,
-        },
-  ),
-});
+      }
+
+      if (retVal !== null) {
+        break;
+      }
+    }
+    if (!retVal) {
+      throw new id.CredentialUnavailable(
+        "None of the supplied authentication methods managed to acquire token",
+      );
+    }
+    return retVal;
+  }
+
+  private checkScopesFromArgs(scopeOrScopes: common.OneOrMore<string>) {
+    const scopes =
+      typeof scopeOrScopes === "string" ? [scopeOrScopes] : scopeOrScopes;
+    const scopeOK = scopes.every((scope) => this.scopes.indexOf(scope) >= 0);
+    if (!scopeOK) {
+      throw new Error(
+        `The given scopes [${scopes
+          .map((scope) => `"${scope}"`)
+          .join(
+            ", ",
+          )}] were not fully overlapping with initially provided scopes [${this.scopes
+          .map((scope) => `"${scope}"`)
+          .join(", ")}].`,
+      );
+    }
+  }
+}
+
+interface CredentialInfo {
+  credential: common.ItemOrFactory<id.TokenCredential, [ReadonlyArray<string>]>;
+  passGivenTokens: boolean;
+}
+
+// class TokenCacheBySingleScope implements id.TokenCredential {
+//   private readonly _cache: Record<string, Promise<id.AccessToken | null>>;
+//   public constructor(private readonly credentials: id.TokenCredential) {
+//     this._cache = {};
+//   }
+//   public getToken(
+//     scopes: common.OneOrMore<string>,
+//     options?: id.GetTokenOptions,
+//   ) {
+//     console.log("SCOPEZZ", scopes);
+//     const singleScope =
+//       typeof scopes === "string"
+//         ? scopes
+//         : scopes.length === 1
+//         ? scopes[0]
+//         : undefined;
+//     if (!singleScope) {
+//       throw new Error(
+//         "Token cache by single scope only accepts single scope as scope argument.",
+//       );
+//     }
+
+//     return common.getOrAddGeneric(this._cache, singleScope, (scope) =>
+//       this.credentials.getToken(scope, options),
+//     );
+//   }
+// }
 
 void (async () => {
   try {

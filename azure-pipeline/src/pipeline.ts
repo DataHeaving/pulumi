@@ -8,6 +8,7 @@ import * as authUtils from "./auth";
 export interface RunFromConfigOptions<
   TCommand extends pulumiAutomation.PulumiCommand,
 > {
+  eventEmitters: PulumiPipelineEventEmitters;
   config: config.PipelineConfig;
   plugins: ReadonlyArray<pulumiAutomation.PulumiPluginDescription>;
   command: TCommand;
@@ -20,7 +21,6 @@ export interface RunFromConfigOptions<
       "auth" | "backendConfig" | "programArgs"
     >
   >;
-  eventEmitters?: PulumiPipelineEventEmitters;
 }
 
 export const runPulumiPipelineFromConfig = async <
@@ -62,29 +62,34 @@ export const runPulumiPipeline = async <
   stackArgs: pulumiAzure.PulumiAzureBackendStackAcquiringConfig,
   plugins: ReadonlyArray<pulumiAutomation.PulumiPluginDescription>,
   command: TCommand,
-  eventEmitters: PulumiPipelineEventEmitters | undefined,
+  eventEmitters: PulumiPipelineEventEmitters,
 ) => {
+  // ReturnType<pulumi.Stack[TCommand]> <- didn't work, because "async must be Promise"
   const stack = await pulumiAzure.getOrCreateStackWithAzureBackend(stackArgs);
   await pulumiAutomation.initPulumiExecution(
-    eventEmitters?.initCommandEventEmitter ??
-      pulumiAutomation
-        .consoleLoggingInitEventEmitterBuilder()
-        .createEventEmitter(),
+    eventEmitters.initCommandEventEmitter,
     stack,
     plugins,
   );
-  // There is some weird TS compiler bug causing return type of this function to become Promise<PreviewResult|DestroyResult>, unless we explicitly specify generic argument here.
-  return await pulumiAutomation.runPulumiInfrastructureCommandForStack<pulumiAutomation.PulumiCommand>(
-    eventEmitters?.runCommandEventEmitter ??
-      pulumiAutomation
-        .consoleLoggingRunEventEmitterBuilder()
-        .createEventEmitter(),
+  // There is some weird TS compiler bug causing return type of this function to become Promise<PreviewResult|DestroyResult>, unless we explicitly do cast here + at
+  return (await pulumiAutomation.runPulumiInfrastructureCommandForStack(
+    eventEmitters.runCommandEventEmitter,
     stack,
     command,
-  );
+  )) as PulumiCommandResult<TCommand>;
 };
 
-export type PulumiPipelineEventEmitters = Partial<{
+export type PulumiPipelineEventEmitters = {
   initCommandEventEmitter: pulumiAutomation.InitEventEmitter;
   runCommandEventEmitter: pulumiAutomation.RunEventEmitter;
-}>;
+};
+
+export type PulumiCommandResult<
+  TCommand extends pulumiAutomation.PulumiCommand,
+> = TCommand extends "up"
+  ? pulumi.UpResult
+  : TCommand extends "preview"
+  ? pulumi.PreviewResult
+  : TCommand extends "destroy"
+  ? pulumi.DestroyResult
+  : never;

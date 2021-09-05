@@ -3,7 +3,6 @@ import * as authArm from "@azure/arm-authorization";
 import * as t from "io-ts";
 import * as validation from "@data-heaving/common-validation";
 import * as uuid from "uuid";
-import * as common from "./run-common";
 
 export const listOf = <TType extends t.Mixed>(item: TType) =>
   t.array(item, `${item.name}List`);
@@ -25,7 +24,7 @@ export const upsertRoleAssignment = async (
   return (
     validation
       .decodeOrThrow(
-        common.listOf(roleAssignment).decode,
+        listOf(roleAssignment).decode,
         await roleAssignments.listForScope(scope, {
           // Notice: if you re-run this code quickly in succession, bear in mind that this filter does not immediately see role assignment created on previous run.
           // This will result in "RoleAssignmentExists" error.
@@ -53,7 +52,21 @@ const roleAssignment = t.type(
     scope: validation.nonEmptyString,
     roleDefinitionId: validation.nonEmptyString,
     principalId: validation.uuid,
-    principalType: validation.nonEmptyString, // 'ServicePrincipal'
+    principalType: t.union(
+      [
+        t.literal("User"),
+        t.literal("Group"),
+        t.literal("ServicePrincipal"),
+        t.literal("Unknown"),
+        t.literal("DirectoryRoleTemplate"),
+        t.literal("ForeignGroup"),
+        t.literal("Application"),
+        t.literal("MSI"),
+        t.literal("DirectoryObjectOrGroup"),
+        t.literal("Everyone"),
+      ],
+      "PrincipalType",
+    ),
   },
   "RoleAssignment",
 );

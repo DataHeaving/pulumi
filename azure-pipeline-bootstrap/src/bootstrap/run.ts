@@ -1,13 +1,14 @@
+import "cross-fetch";
 import "cross-fetch/polyfill";
 import * as graph from "@microsoft/microsoft-graph-client";
-import { TokenCredentialAuthenticationProvider } from "@microsoft/microsoft-graph-client/authProviders/azureTokenCredentials";
 import * as id from "@azure/identity";
-import * as utils from "@data-heaving/common";
+import * as common from "@data-heaving/common";
 import * as pulumi from "@data-heaving/pulumi-azure-pipeline-setup";
 import * as fs from "fs/promises";
 import * as t from "io-ts";
 import * as validation from "@data-heaving/common-validation";
 import * as pulumiAzure from "@data-heaving/pulumi-azure";
+import * as types from "./types";
 import * as events from "./events";
 import * as ad from "./run-ad";
 import * as auth from "./run-auth";
@@ -16,7 +17,7 @@ import * as certs from "./run-certs";
 
 export interface Inputs {
   eventEmitter: events.BootstrapEventEmitter;
-  credentials: id.TokenCredential;
+  credentials: types.BootstrappingCredentials;
   bootstrapperApp: BootstrapperAppSP | BootstrapperAppMSI;
   azure: pulumiAzure.AzureCloudInformationFull;
   organization: pulumiSetup.OrganizationInfo;
@@ -81,10 +82,27 @@ const setupBootstrapperApp = async ({
   let bootstrapperCredentials: id.TokenCredential;
   let bootstrapperPulumiAuth: pulumiAzure.PulumiAzureBackendAuth;
   let spAuthStorageConfig: pulumiSetup.SPAuthStorageConfig | undefined;
+  // If we use AzureCLI auth, we must pass different kind of scope, because Azure CLI still uses ADAL-based v1 auth flow, while graph.Client uses MSAL-based v2 auth flow
+  // For more info, see: https://github.com/Azure/azure-cli/issues/12986#issuecomment-643955267
+  // And https://github.com/Azure/azure-sdk-for-net/issues/17696
+  // graph.Client does not cache tokens, so we have to do it ourselves.
+  // let graphToken: string | undefined;
   const graphClient = graph.Client.initWithMiddleware({
-    authProvider: new TokenCredentialAuthenticationProvider(credentials, {
-      scopes: ["https://graph.microsoft.com"],
-    }),
+    authProvider: credentials,
+    // {
+    //   getAccessToken: async () =>
+    //     graphToken ??
+    //     (graphToken = await new TokenCredentialAuthenticationProvider(
+    //       credentials,
+    //       {
+    //         scopes: ["https://graph.microsoft.com/.default"], // AzureCliCredential will cut out the "/.default", so that legacy ADAL authentication library it uses will work
+    //       },
+    //     ).getAccessToken()),
+    // },
+    //  new TokenCredentialAuthenticationProvider(credentials, {
+    //   scopes: ["https://graph.microsoft.com/.default"], // AzureCliCredential will cut out the "/.default", so that legacy ADAL authentication library it uses will work
+    // }),
+    debugLogging: true,
   });
   const envSpecificPipelineConfigReader: pulumi.EnvSpecificPipelineConfigReader =
     {
@@ -181,7 +199,7 @@ const runWithBootstrapper = async (
     bootstrapperCredentials,
     principalId,
     spAuthStorageConfig,
-  }: utils.DePromisify<ReturnType<typeof setupBootstrapperApp>>,
+  }: common.DePromisify<ReturnType<typeof setupBootstrapperApp>>,
 ) => {
   // 4. Create credentials for bootstrap SP, and then create necessary resources for Pulumi state management using bootstrap SP
   return await pulumiSetup.ensureRequireCloudResourcesForPulumiStateExist({
