@@ -1,5 +1,5 @@
 import * as tls from "@pulumi/tls";
-
+import * as authorization from "@pulumi/azure-native/authorization";
 export type OrganizationInfo = {
   name: string;
   /**
@@ -21,7 +21,7 @@ export interface OrganizationEnvironment {
 
 export interface EnvSpecificPipelineConfigReader {
   principalId: string;
-  principalType: string;
+  principalType: authorization.PrincipalType;
 }
 
 export interface PulumiPipelineConfig<TAuth> {

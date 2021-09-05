@@ -5,21 +5,27 @@ import * as storage from "@azure/arm-storage";
 import * as kv from "@azure/arm-keyvault-profile-2020-09-01-hybrid";
 import * as secrets from "@azure/keyvault-secrets";
 import * as keys from "@azure/keyvault-keys";
-import {
-  getSecretValue,
-  SecretDoesNotExistError,
-} from "@data-heaving/azure-kv-secret";
-import * as utils from "@data-heaving/common";
+import * as secretGetting from "@data-heaving/azure-kv-secret";
+import * as common from "@data-heaving/common";
 import * as pulumiAzure from "@data-heaving/pulumi-azure";
-import * as common from "./common";
+import * as events from "./events";
+import * as utils from "./run-common";
 
 export interface Inputs {
+  eventEmitter: events.BootstrapEventEmitter;
   credentials: auth.TokenCredential;
   azure: pulumiAzure.AzureCloudInformationFull;
   principalId: string;
   organization: OrganizationInfo;
   spAuthStorageConfig: SPAuthStorageConfig | undefined;
   pulumiEncryptionKeyBits: number;
+}
+
+export interface Outputs {
+  cicdRGName: string;
+  kvName: string;
+  backendConfig: pulumiAzure.PulumiAzureBackendConfig;
+  backendStorageAccountKey: string;
 }
 
 export interface OrganizationInfo {
@@ -35,58 +41,63 @@ export interface SPAuthStorageConfig {
 
 export const ensureRequireCloudResourcesForPulumiStateExist = async (
   inputs: Inputs,
-): Promise<{
-  cicdRGName: string;
-  kvName: string;
-  backendConfig: pulumiAzure.PulumiAzureBackendConfig;
-  backendStorageAccountKey: string;
-}> => {
-  const { organization } = inputs;
+): Promise<Outputs> => {
+  const { eventEmitter, organization } = inputs;
   const clientArgs = [inputs.credentials, inputs.azure.subscriptionId] as const;
   // Upsert resource group
-  const cicdRGName = await ensureResourceGroupExists(clientArgs, organization);
+  const cicdRGName = await ensureResourceGroupExists(
+    eventEmitter,
+    clientArgs,
+    organization,
+  );
 
   const storageContainerName = "bootstrap";
-  const [{ kv, key }, storageAccountInfo] = await Promise.all([
-    ensureKeyVaultIsConfigured(
-      clientArgs,
-      inputs,
-      cicdRGName,
-      storageContainerName,
-    ),
-    ensureStorageAccountIsConfigured(
-      clientArgs,
-      organization,
-      cicdRGName,
-      storageContainerName,
-    ),
-  ]);
+  const [{ vaultName, encryptionKeyURL }, storageAccountInfo] =
+    await Promise.all([
+      ensureKeyVaultIsConfigured(
+        clientArgs,
+        inputs,
+        cicdRGName,
+        storageContainerName,
+      ),
+      ensureStorageAccountIsConfigured(
+        eventEmitter,
+        clientArgs,
+        organization,
+        cicdRGName,
+        storageContainerName,
+      ),
+    ]);
 
   return {
     cicdRGName,
-    kvName: kv.name,
+    kvName: vaultName,
     backendConfig: {
       storageAccountName: storageAccountInfo.storageAccountName,
       storageContainerName,
-      ...key,
+      encryptionKeyURL,
     },
     backendStorageAccountKey: storageAccountInfo.storageAccountKey,
   };
 };
 
 const ensureResourceGroupExists = async (
-  clientArgs: common.ClientArgs,
+  eventEmitter: events.BootstrapEventEmitter,
+  clientArgs: utils.ClientArgs,
   { name: organization, location }: Inputs["organization"],
-) =>
+) => {
+  const rg = await new resources.ResourceManagementClient(
+    ...clientArgs,
+  ).resourceGroups.createOrUpdate(`${organization}-cicd`, { location });
   // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-  (
-    await new resources.ResourceManagementClient(
-      ...clientArgs,
-    ).resourceGroups.createOrUpdate(`${organization}-cicd`, { location })
-  ).name!;
+  const rgName = rg.name!;
+  eventEmitter.emit("resourceGroupCreatedOrUpdated", rg);
+  return rgName;
+};
 
 const ensureStorageAccountIsConfigured = async (
-  clientArgs: common.ClientArgs,
+  eventEmitter: events.BootstrapEventEmitter,
+  clientArgs: utils.ClientArgs,
   { name: organization, location }: Inputs["organization"],
   rgName: string,
   containerName: string,
@@ -103,27 +114,40 @@ const ensureStorageAccountIsConfigured = async (
     };
   const saName = `${organization.replace(/[-_]/g, "")}cicd`;
 
-  await ((await storageAccounts.checkNameAvailability(saName)).nameAvailable ===
-  true
-    ? storageAccounts.create(rgName, saName, {
-        ...updateArgs,
-        location,
-        kind: "StorageV2",
-        sku: {
-          name: "Standard_GRS",
-        },
-      })
-    : storageAccounts.update(rgName, saName, updateArgs));
+  eventEmitter.emit(
+    "storageAccountCreatedOrUpdated",
+    await ((
+      await storageAccounts.checkNameAvailability(saName)
+    ).nameAvailable === true
+      ? storageAccounts.create(rgName, saName, {
+          ...updateArgs,
+          location,
+          kind: "StorageV2",
+          sku: {
+            name: "Standard_GRS",
+          },
+        })
+      : storageAccounts.update(rgName, saName, updateArgs)),
+  );
 
-  // Enable blob versioning for SA
-  await blobServices.setServiceProperties(rgName, saName, {
-    isVersioningEnabled: true,
-  });
-
-  // Upsert container for Pulumi state in SA (notice that this time just using 'create' is enough, unlike with storage account)
-  await blobContainers.create(rgName, saName, containerName, {
-    publicAccess: "None",
-  });
+  await Promise.all([
+    // Enable blob versioning for SA
+    (async () =>
+      eventEmitter.emit(
+        "storageAccountBlobServicesConfigured",
+        await blobServices.setServiceProperties(rgName, saName, {
+          isVersioningEnabled: true,
+        }),
+      ))(),
+    // Upsert container for Pulumi state in SA (notice that this time just using 'create' is enough, unlike with storage account)
+    (async () =>
+      eventEmitter.emit(
+        "storageAccountContainerCreatedOrUpdated",
+        await blobContainers.create(rgName, saName, containerName, {
+          publicAccess: "None",
+        }),
+      ))(),
+  ]);
 
   return {
     storageAccountName: saName,
@@ -133,8 +157,9 @@ const ensureStorageAccountIsConfigured = async (
 };
 
 const ensureKeyVaultIsConfigured = async (
-  clientArgs: common.ClientArgs,
+  clientArgs: utils.ClientArgs,
   {
+    eventEmitter,
     organization: { name: organization, location },
     azure: { tenantId },
     principalId,
@@ -147,7 +172,7 @@ const ensureKeyVaultIsConfigured = async (
   const { vaults } = new kv.KeyVaultManagementClient(...clientArgs);
 
   const vaultName = constructVaultName(organization);
-  const vault = await vaults.createOrUpdate(rgName, vaultName, {
+  const kvResult = await vaults.createOrUpdate(rgName, vaultName, {
     location,
     properties: {
       sku: {
@@ -160,40 +185,68 @@ const ensureKeyVaultIsConfigured = async (
       enableRbacAuthorization: true,
     },
   });
+  const {
+    id,
+    properties: { vaultUri },
+  } = kvResult;
 
-  const kvURL = vault.properties.vaultUri!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
-  const vaultID = vault.id!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+  eventEmitter.emit("keyVaultCreatedOrUpdated", kvResult);
+
+  const kvURL = vaultUri!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+  const vaultID = id!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
 
   // Enable managing key vault for this SP
-  await common.upsertRoleAssignment(
-    clientArgs,
-    vaultID,
-    // From https://docs.microsoft.com/en-us/azure/role-based-access-control/built-in-roles
-    "00482a5a-887f-4fb3-b363-3b7fe8e74483", // "Key Vault Administrator"
-    principalId,
+  eventEmitter.emit(
+    "keyVaultAdminRoleAssignmentCreatedOrUpdated",
+    await utils.upsertRoleAssignment(
+      clientArgs,
+      vaultID,
+      // From https://docs.microsoft.com/en-us/azure/role-based-access-control/built-in-roles
+      "00482a5a-887f-4fb3-b363-3b7fe8e74483", // "Key Vault Administrator"
+      principalId,
+    ),
   );
 
   // The "getKeys" method exists only for "KeyVaultClient" class of "@azure/keyvault-keys" module.
   // However, the class is not exported -> therefore we have to make this ugly hack
   const keyClient = new keys.KeyClient(kvURL, clientArgs[0]);
-  let key = await retryIf403(
-    () => keyClient.getKey(keyName),
-    "Waiting for key vault role assignment to propagate for encryption key...",
-  );
-  if (!key) {
-    key = await keyClient.createRsaKey(keyName, {
-      keySize: pulumiEncryptionKeyBits,
+  let key: keys.KeyVaultKey | undefined;
+  try {
+    key = await retryIf403(
+      () => keyClient.getKey(keyName),
+      "Waiting for key vault role assignment to propagate for encryption key...",
+    );
+  } catch (e) {
+    if (!(e instanceof http.RestError && e.code === "KeyNotFound")) {
+      throw e;
+    }
+  }
+  {
+    let createNew = false;
+    if (!key) {
+      key = await keyClient.createRsaKey(keyName, {
+        keySize: pulumiEncryptionKeyBits,
+      });
+      createNew = true;
+    }
+    eventEmitter.emit("keyCreatedOrUpdated", {
+      createNew,
+      key,
     });
   }
+  const encryptionKeyURL = key.id!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
   // Store key + cert pem, if specified
   if (spAuthStorageConfig) {
     const secretName = constructBootstrapperAppAuthSecretName();
-    await common.upsertRoleAssignment(
-      clientArgs,
-      `${vaultID}/secrets/${secretName}`,
-      // From https://docs.microsoft.com/en-us/azure/role-based-access-control/built-in-roles
-      "4633458b-17de-408a-b874-0445c86b69e6", // "Key Vault Secrets User",
-      spAuthStorageConfig.configReaderPrincipalId,
+    eventEmitter.emit(
+      "keyVaultAuthenticationSecretRoleAssignmentCreatedOrUpdated",
+      await utils.upsertRoleAssignment(
+        clientArgs,
+        `${vaultID}/secrets/${secretName}`,
+        // From https://docs.microsoft.com/en-us/azure/role-based-access-control/built-in-roles
+        "4633458b-17de-408a-b874-0445c86b69e6", // "Key Vault Secrets User",
+        spAuthStorageConfig.configReaderPrincipalId,
+      ),
     );
     const existingSecretValue = await retryIf403(
       () =>
@@ -204,21 +257,23 @@ const ensureKeyVaultIsConfigured = async (
       "Waiting for key vault role assignment to propagate for bootstrapper app auth secret...",
     );
     const secretValue = `${spAuthStorageConfig.keyPEM}${spAuthStorageConfig.certPEM}`;
-    if (existingSecretValue !== secretValue) {
+    const createNew = existingSecretValue !== secretValue;
+    if (createNew) {
       await new secrets.SecretClient(kvURL, clientArgs[0]).setSecret(
         secretName,
         secretValue,
       );
     }
+    eventEmitter.emit("authenticationSecretCreatedOrUpdated", {
+      createNew,
+      secretName,
+      secretValue,
+    });
   }
 
   return {
-    kv: {
-      name: vaultName,
-    },
-    key: {
-      encryptionKeyURL: key.id!, // eslint-disable-line @typescript-eslint/no-non-null-assertion
-    },
+    vaultName,
+    encryptionKeyURL, // eslint-disable-line @typescript-eslint/no-non-null-assertion
   };
 };
 
@@ -239,7 +294,7 @@ const retryIf403 = async <T>(getAction: () => Promise<T>, message: string) => {
     if (tryAgain) {
       // eslint-disable-next-line no-console
       console.info(message);
-      await utils.sleep(10 * 1000);
+      await common.sleep(10 * 1000);
     }
   } while (tryAgain);
 
@@ -252,11 +307,11 @@ export const constructVaultName = (organization: string) =>
 export const constructBootstrapperAppAuthSecretName = () => "bootstrapper-auth";
 
 export const tryGetSecretValue = async (
-  ...args: Parameters<typeof getSecretValue>
+  ...args: Parameters<typeof secretGetting.getSecretValue>
 ) => {
   let secretValue: string | undefined;
   try {
-    secretValue = await getSecretValue(...args);
+    secretValue = await secretGetting.getSecretValue(...args);
   } catch (e) {
     if (!isSecretNotFoundError(e)) {
       throw e;
@@ -267,5 +322,5 @@ export const tryGetSecretValue = async (
 };
 
 const isSecretNotFoundError = (error: unknown) =>
-  error instanceof SecretDoesNotExistError ||
+  error instanceof secretGetting.SecretDoesNotExistError ||
   (error instanceof http.RestError && error.code === "SecretNotFound");
