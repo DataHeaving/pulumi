@@ -31,8 +31,8 @@
     "@azure/keyvault-keys": "^4.3.0",
     "@data-heaving/azure-kv-secret": "^1.0.0",
     "@data-heaving/common-validation": "^1.0.0",
-    "@data-heaving/pulumi-azure-pipeline": "^1.0.0",
-    "@data-heaving/pulumi-azure-pipeline-setup": "^1.1.1",
+    "@data-heaving/pulumi-azure-pipeline": "^1.1.0",
+    "@data-heaving/pulumi-azure-pipeline-setup": "^1.1.2",
     "@microsoft/microsoft-graph-client": "^3.0.0",
     "cross-fetch": "^3.1.4"
   },
@@ -44,9 +44,9 @@
     "@data-heaving/common-validation": "^1.0.0",
     "@data-heaving/pulumi-automation": "^1.0.0",
     "@data-heaving/pulumi-azure": "^1.0.1",
-    "@data-heaving/pulumi-azure-pipeline": "^1.0.0",
+    "@data-heaving/pulumi-azure-pipeline": "^1.1.0",
     "@data-heaving/pulumi-azure-pipeline-config": "^1.0.0",
-    "@data-heaving/pulumi-azure-pipeline-setup": "^1.1.1",
+    "@data-heaving/pulumi-azure-pipeline-setup": "^1.1.2",
     "@microsoft/microsoft-graph-client": "^3.0.0",
     "@pulumi/azure-native": "1.24.0",
     "@pulumi/azuread": "^4.3.0",
@@ -72,6 +72,10 @@
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/cjs/index.d.ts",
+  "bin": {
+    "pulumi-azure-pipeline-bootstrap": "./dist/cjs/cli.js",
+    "pulumi-azure-pipeline-bootstrap-esm": "./dist/esm/cli.js"
+  },
   "ava": {
     "files": [
       "dist/cjs/**/tests/*.spec.js"
