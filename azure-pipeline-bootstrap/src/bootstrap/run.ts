@@ -84,8 +84,7 @@ const setupBootstrapperApp = async ({
   let spAuthStorageConfig: pulumiSetup.SPAuthStorageConfig | undefined;
   const graphClient = graph.Client.initWithMiddleware({
     authProvider: credentials,
-
-    debugLogging: true,
+    debugLogging: true, // This will print URL of every command
   });
   const envSpecificPipelineConfigReader: pulumi.EnvSpecificPipelineConfigReader =
     bootstrapperApp.type === "msi"
@@ -95,7 +94,7 @@ const setupBootstrapperApp = async ({
         }
       : {
           principalId: await getCurrentPrincipalId(graphClient),
-          principalType: "User", // TODO how to get this meaningfully via Graph API, or should use some other trick? Maybe examine type of credentials via instanceof ? Only possible way for that to be user is if they are Cli/Device credentials
+          principalType: "User", // TODO how to get this meaningfully via Graph API, or should use some other trick? Maybe examine type of credentials via instanceof ? Only possible way for that to be user is if they are Cli/Device credentials. I guess "ServicePrincipal" is another possibility here?
         };
   switch (bootstrapperApp.type) {
     case "sp":

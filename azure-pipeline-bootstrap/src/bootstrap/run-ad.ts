@@ -36,11 +36,13 @@ export const ensureBootstrapSPIsConfigured = async ({
 
   // Concurrently,
   // - ensure that service principal("App Registration") exists, and
+  // - ensure that app has correct permissions configured (if needed)
   // - ensure that app has correct certificate-based authentication configured
-  // - ensure that app has correct permissions configured
-  // Last two items can be done concurrently since PATCH request will not modify same properties.
   const [sp] = await Promise.all([
     ensureBootstrapperSPExists(eventEmitter, graphClient, appId),
+    willNeedToCreateAADApps
+      ? grantAppPermissions(eventEmitter, graphClient, app)
+      : undefined,
     ensureCertificateAuthenticationExists(
       eventEmitter,
       graphClient,
@@ -49,13 +51,9 @@ export const ensureBootstrapSPIsConfigured = async ({
     ),
   ]);
 
-  await ensureAppHasSufficientPermissions(
-    eventEmitter,
-    willNeedToCreateAADApps,
-    graphClient,
-    app,
-    sp,
-  );
+  if (willNeedToCreateAADApps) {
+    await grantAdminConsent(eventEmitter, graphClient, sp);
+  }
 
   return {
     clientId: appId,
@@ -63,21 +61,25 @@ export const ensureBootstrapSPIsConfigured = async ({
   };
 };
 
+const appGraphApi = "/applications";
 const ensureBootstrapperAppExists = async (
   eventEmitter: events.BootstrapEventEmitter,
   client: graph.Client,
   bootstrapperAppName: string,
 ) => {
-  const api = client.api("/applications");
+  // Don't cache result of client.api as it is stateful
   const existingApp = validation.decodeOrThrow(
     graphAPIListOf(types.application).decode,
-    await api.filter(`displayName eq '${bootstrapperAppName}'`).get(),
+    await client
+      .api(appGraphApi)
+      .filter(`displayName eq '${bootstrapperAppName}'`)
+      .get(),
   ).value[0];
   const application =
     existingApp ??
     validation.decodeOrThrow(
       types.application.decode,
-      await api.post({
+      await client.api(appGraphApi).post({
         displayName: bootstrapperAppName,
       }),
     );
@@ -94,13 +96,12 @@ const ensureBootstrapperSPExists = async (
   client: graph.Client,
   bootstrapperAppId: string,
 ) => {
-  const api = client.api(spGraphApi);
-  const existingSP = await getSPByAppId(api, bootstrapperAppId);
+  const existingSP = await getSPByAppId(client, bootstrapperAppId);
   const servicePrincipal =
     existingSP ??
     validation.decodeOrThrow(
       types.servicePrincipal.decode,
-      await api.post({
+      await client.api(spGraphApi).post({
         appId: bootstrapperAppId,
       }),
     );
@@ -112,12 +113,12 @@ const ensureBootstrapperSPExists = async (
 };
 
 const getSPByAppId = async (
-  api: graph.GraphRequest,
+  client: graph.Client,
   appId: string,
 ): Promise<types.ServicePrincipal | undefined> =>
   validation.decodeOrThrow(
     graphAPIListOf(types.servicePrincipal).decode,
-    await api.filter(`appId eq '${appId}'`).get(),
+    await client.api(spGraphApi).filter(`appId eq '${appId}'`).get(),
   ).value[0];
 
 const ensureCertificateAuthenticationExists = async (
@@ -171,7 +172,7 @@ const ensureCertificateAuthenticationExists = async (
     const { customKeyIdentifier: _, ...credentialToPassToApi } = credential;
     // Please notice, the tricky part about /applications/${appId}/addKey, from https://docs.microsoft.com/en-us/graph/api/application-addkey?view=graph-rest-1.0&tabs=javascript
     // "Applications that don’t have any existing valid certificates (no certificates have been added yet, or all certificates have expired), won’t be able to use this service action. You can use the Update application operation to perform an update instead."
-    await client.api(`/applications/${id}`).patch({
+    await client.api(`${appGraphApi}/${id}`).patch({
       keyCredentials: [...keyCredentials, credentialToPassToApi],
     });
     // We must wait some time to let the AAD eventually consistent DB to catch up - if we don't do this, we will get an error when we try to sign in with SP right after this
@@ -199,20 +200,6 @@ const appRequiredPermissions: Array<types.ApplicationRequiredResourceAccess> = [
   },
 ];
 
-const ensureAppHasSufficientPermissions = async (
-  eventEmitter: events.BootstrapEventEmitter,
-  bootstrapperWillNeedToCreateAADApps: boolean,
-  client: graph.Client,
-  application: types.Application,
-  servicePrincipal: types.ServicePrincipal,
-) => {
-  // This is currently only needed if app needs to create other apps
-  if (bootstrapperWillNeedToCreateAADApps) {
-    await grantAppPermissions(eventEmitter, client, application);
-    await grantAdminConsent(eventEmitter, client, servicePrincipal);
-  }
-};
-
 const grantAppPermissions = async (
   eventEmitter: events.BootstrapEventEmitter,
   client: graph.Client,
@@ -233,7 +220,7 @@ const grantAppPermissions = async (
   });
 
   if (createNew) {
-    await client.api(`/applications/${id}`).patch({
+    await client.api(`${appGraphApi}/${id}`).patch({
       requiredResourceAccess: patchableAccess,
     });
     await common.sleep(waitTimeInSecondsIfCreated * 1000);
@@ -252,7 +239,7 @@ const getResourceSPMap = async (
               types.servicePrincipal.decode,
               await client.api(`${spGraphApi}/${id}`).get(),
             )
-          : await getSPByAppId(client.api(spGraphApi), id),
+          : await getSPByAppId(client, id),
       ),
     )
   )
