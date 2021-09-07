@@ -29,7 +29,7 @@ export const configuration = t.partial(
 );
 
 export const defaultPipelineConfigEnvName = "AZURE_PIPELINE_CONFIG";
-export const defaultEntrypointFileName = "../../../../../index.js"; // Our dir will be node_modules/@data-heaving/pulumi-azure-pipeline/dist/cjs, so we need to go 5 levels up to get to directory containing node_modules folder.
+export const defaultEntrypointFileName = "dist";
 
 /**
  * This runtime validation imitates compile-time type "PipelineConfig" in "@data-heaving/pulumi-azure-pipeline-config" module
