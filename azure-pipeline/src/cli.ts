@@ -33,7 +33,8 @@ export const main = async () => {
   const pulumiProgramModule = validation.decodeOrThrow(
     cliConfig.importedModuleExports.decode,
     await import(
-      config?.entrypointModuleName ?? cliConfig.defaultEntrypointFileName
+      config?.entrypointModuleName ??
+        cliConfig.createDefaultEntrypointFileName()
     ),
   );
   const { plugins, programConfig, additionalParameters } =
