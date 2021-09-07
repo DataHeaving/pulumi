@@ -1,5 +1,6 @@
 import * as t from "io-ts";
 import * as validation from "@data-heaving/common-validation";
+import { cwd } from "process";
 
 /**
  * This is runtime validation for command-line arguments passed to this CLI program
@@ -29,7 +30,7 @@ export const configuration = t.partial(
 );
 
 export const defaultPipelineConfigEnvName = "AZURE_PIPELINE_CONFIG";
-export const defaultEntrypointFileName = "dist";
+export const createDefaultEntrypointFileName = () => `${cwd()}/dist/index.js`;
 
 /**
  * This runtime validation imitates compile-time type "PipelineConfig" in "@data-heaving/pulumi-azure-pipeline-config" module
