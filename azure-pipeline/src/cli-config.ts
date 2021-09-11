@@ -68,7 +68,19 @@ export const pipelineConfiguration = t.type(
  * This is runtime validation for exported variable of JS module containing Pulumi program.
  */
 const pluginName = validation.nonEmptyString;
-const pulumiProgram = t.intersection(
+const additionalParameters = t.partial(
+  {
+    skipDeletePfxPathIfCreated: t.boolean,
+    processEnvVars: t.Function,
+    processLocalWorkspaceOptions: t.Function,
+    processAdditionalEnvVars: t.Function,
+  },
+  "PulumiPipelineAdditionalParameters",
+);
+export type PulumiPipelineAdditionalParameters = t.TypeOf<
+  typeof additionalParameters
+>;
+const pulumiPipelineExport = t.intersection(
   [
     t.type(
       {
@@ -99,11 +111,7 @@ const pulumiProgram = t.intersection(
     ),
     t.partial(
       {
-        additionalParameters: t.partial({
-          skipDeletePfxPathIfCreated: t.boolean,
-          processEnvVars: t.Function,
-          processLocalWorkspaceOptions: t.Function,
-        }),
+        additionalParameters,
       },
       "PulumiProgramOptional",
     ),
@@ -118,13 +126,13 @@ export const importedModuleExports = t.union(
   [
     t.type(
       {
-        default: pulumiProgram,
+        default: pulumiPipelineExport,
       },
       "ImportedModuleExportsViaDefault",
     ),
     t.type(
       {
-        pulumiProgram,
+        pulumiProgram: pulumiPipelineExport,
       },
       "ImportedModuleExportsViaName",
     ),
