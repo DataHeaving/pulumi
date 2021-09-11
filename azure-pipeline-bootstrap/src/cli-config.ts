@@ -161,6 +161,25 @@ export const config = t.intersection(
         ),
         organization,
         azure,
+        // This is same as TargetResourcesConfig interface in azure-pipeline-setup package
+        targetResources: t.intersection(
+          [
+            t.type(
+              {
+                cicdRGSuffix: validation.nonEmptyString,
+              },
+              "BootstrapTargetResourcesMandatory",
+            ),
+            t.partial(
+              {
+                targetRGSuffix: t.string,
+                skipTargetRoleAssignment: t.boolean,
+              },
+              "BootstrapTargetResourcesOptional",
+            ),
+          ],
+          "BootstrapTargetResources",
+        ),
       },
       "BootstrapConfigMandatory",
     ),
