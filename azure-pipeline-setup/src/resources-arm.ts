@@ -112,7 +112,7 @@ const createCICDRG = async ({
 }: Inputs) => {
   const resID = `${envName}-cicd`;
   // RG to hold CICD resources
-  const resourceGroupName = `${organization}-${envName}-cicd-site`;
+  const resourceGroupName = `${organization}-${envName}-cicd-${cicdRGSuffix}`;
   const rg = new resources.ResourceGroup(
     resID,
     {
