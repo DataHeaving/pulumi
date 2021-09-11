@@ -4,7 +4,7 @@ import * as graph from "@microsoft/microsoft-graph-client";
 import * as common from "@data-heaving/common";
 import * as validation from "@data-heaving/common-validation";
 import * as pulumiAutomation from "@data-heaving/pulumi-automation";
-import { argv, env, stdin } from "process";
+import { argv, env, exit, stdin } from "process";
 import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
@@ -61,11 +61,22 @@ const readStream = async (stream: Readable) => {
 const STDIN = "-";
 const ENV_PREFIX = "env:";
 const readFromFileOrStdinOrEnv = (pathOrEnvName: string) => {
-  return pathOrEnvName === STDIN
-    ? readStream(stdin)
-    : pathOrEnvName.startsWith(ENV_PREFIX)
-    ? env[pathOrEnvName.substr(ENV_PREFIX.length)] ?? ""
-    : fs.readFile(pathOrEnvName, "utf8");
+  let result: () => Promise<string>;
+  let source: string;
+  if (pathOrEnvName === STDIN) {
+    result = () => readStream(stdin);
+    source = "stdin";
+  } else if (pathOrEnvName.startsWith(ENV_PREFIX)) {
+    const envVarName = pathOrEnvName.substr(ENV_PREFIX.length);
+    result = () => Promise.resolve(env[envVarName] ?? "");
+    source = `environment variable "${envVarName}"`;
+  } else {
+    result = () => fs.readFile(pathOrEnvName, "utf8");
+    source = `file at path "${pathOrEnvName}"`;
+  }
+  // eslint-disable-next-line no-console
+  console.log(`Reading configuration from ${source}.`);
+  return result();
 };
 
 const getDoChanges = (args: Array<string>) => {
@@ -420,5 +431,6 @@ void (async () => {
   } catch (e) {
     // eslint-disable-next-line no-console
     console.error("ERROR", e);
+    exit(1);
   }
 })();
