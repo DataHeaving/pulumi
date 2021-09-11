@@ -6,7 +6,10 @@ test("Test that Azure provider env vars are deduced correctly", (t) => {
   const runTestForArgs = (
     args: spec.PulumiAzureBackendStackAcquiringConfig,
   ) => {
-    const azureProviderEnv = spec.getAzureProviderEnvVars(args);
+    const azureProviderEnv = spec.getAzureProviderEnvVars({
+      auth: args.pulumi.auth,
+      azure: args.azure,
+    });
     const expectedEnv: Record<string, string> = {
       ARM_TENANT_ID: args.azure.tenantId,
       ARM_DISABLE_PULUMI_PARTNER_ID: "true",

@@ -46,14 +46,23 @@ export const createLocalWorkspaceOptionsForStackWithAzureBackend = (
   const { processEnvVars, processLocalWorkspaceOptions } = parameters.pulumi;
   const wsOptions = {
     ...settings,
-    envVars: (processEnvVars ?? createDefaultProcessEnvVars(parameters))(
-      envVars,
-    ),
+    envVars: (
+      processEnvVars ??
+      createDefaultProcessEnvVars({
+        auth: parameters.pulumi.auth,
+        azure: parameters.azure,
+      })
+    )(envVars),
   };
   return (processLocalWorkspaceOptions ?? defaultProcessLocalWorkspaceOptions)(
     wsOptions,
   );
 };
+
+export interface AzureProviderEnvVarsConfig {
+  auth: PulumiAzureBackendAuth;
+  azure: AzureCloudInformationMinimal;
+}
 
 /**
  * Gets necessary environment variables for easily using "azure-native" Pulumi provider.
@@ -62,10 +71,7 @@ export const createLocalWorkspaceOptionsForStackWithAzureBackend = (
  * @returns {Record<string, string>} Environment variables to pass to Pulumi which are utilized by "azure-native" provider.
  */
 export const getAzureProviderEnvVars = (
-  {
-    pulumi: { auth },
-    azure: { tenantId, subscriptionId },
-  }: PulumiAzureBackendStackAcquiringConfig,
+  { auth, azure: { tenantId, subscriptionId } }: AzureProviderEnvVarsConfig,
   enablePulumiPartnerId?: boolean,
 ) => {
   // For Azure authentication used by Pulumi itself, notice the "ARM_" prefix and slightly different naming for certificate path, for more details see https://www.pulumi.com/docs/reference/pkg/azure-native/provider/#inputs
@@ -110,13 +116,12 @@ export const getAzureProviderEnvVars = (
 
 /**
  * This function creates callback which will then assign result of @see {getAzureProviderEnvVars} to given environment variable dictionary.
- * @param {PulumiAzureBackendStackAcquiringConfig} parameters The configuration of type PulumiStackAcquiringConfig.
+ * @param {AzureProviderEnvVarsConfig} config The configuration of type AzureProviderEnvVarsConfig.
  * @returns Callback which, when called, will assign result of @see {getAzureProviderEnvVars} to given environment variable dictionary.
  */
 export const createDefaultProcessEnvVars =
-  (parameters: PulumiAzureBackendStackAcquiringConfig) =>
-  (envVars: Record<string, string>) =>
-    Object.assign(envVars, getAzureProviderEnvVars(parameters));
+  (config: AzureProviderEnvVarsConfig) => (envVars: Record<string, string>) =>
+    Object.assign(envVars, getAzureProviderEnvVars(config));
 
 /**
  * Right now, this function is no-op,
