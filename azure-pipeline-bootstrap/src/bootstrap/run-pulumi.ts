@@ -37,6 +37,7 @@ export interface SPAuthStorageConfig {
   keyPEM: string;
   certPEM: string;
   configReaderPrincipalId: string;
+  configSecretName: string;
 }
 
 export const ensureRequireCloudResourcesForPulumiStateExist = async (
@@ -183,6 +184,7 @@ const ensureKeyVaultIsConfigured = async (
       enabledForDiskEncryption: false,
       enabledForTemplateDeployment: false,
       enableRbacAuthorization: true,
+      createMode: "recover", // In order to recover previously deleted soft-deletable vaults
     },
   });
   const {
@@ -237,7 +239,7 @@ const ensureKeyVaultIsConfigured = async (
   const encryptionKeyURL = key.id!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
   // Store key + cert pem, if specified
   if (spAuthStorageConfig) {
-    const secretName = constructBootstrapperAppAuthSecretName();
+    const { configSecretName: secretName } = spAuthStorageConfig;
     eventEmitter.emit(
       "keyVaultAuthenticationSecretRoleAssignmentCreatedOrUpdated",
       await utils.upsertRoleAssignment(
@@ -303,8 +305,6 @@ const retryIf403 = async <T>(getAction: () => Promise<T>, message: string) => {
 
 export const constructVaultName = (organization: string) =>
   `${organization}-cicd`;
-
-export const constructBootstrapperAppAuthSecretName = () => "bootstrapper-auth";
 
 export const tryGetSecretValue = async (
   ...args: Parameters<typeof secretGetting.getSecretValue>

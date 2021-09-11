@@ -5,8 +5,6 @@ import * as id from "@azure/identity";
 import * as common from "@data-heaving/common";
 import * as pulumi from "@data-heaving/pulumi-azure-pipeline-setup";
 import * as fs from "fs/promises";
-import * as t from "io-ts";
-import * as validation from "@data-heaving/common-validation";
 import * as pulumiAzure from "@data-heaving/pulumi-azure";
 import * as types from "./types";
 import * as events from "./events";
@@ -18,7 +16,7 @@ import * as certs from "./run-certs";
 export interface Inputs {
   eventEmitter: events.BootstrapEventEmitter;
   credentials: types.BootstrappingCredentials;
-  bootstrapperApp: BootstrapperAppSP | BootstrapperAppMSI;
+  bootstrapperApp: BootstrapperApp;
   azure: pulumiAzure.AzureCloudInformationFull;
   organization: pulumiSetup.OrganizationInfo;
   pulumiEncryptionKeyBits: number;
@@ -42,6 +40,7 @@ export interface BootstrapperAppSP {
     pfxPassword: string;
   };
   willNeedToCreateAADApps: boolean;
+  configSecretName: string;
 }
 
 export interface BootstrapperAppMSI {
@@ -72,7 +71,7 @@ export const performBootstrap = async (inputs: Inputs) => {
 
 const setupBootstrapperApp = async ({
   eventEmitter,
-  credentials,
+  credentials: { credentials, givenClientId },
   bootstrapperApp,
   azure: { tenantId, subscriptionId },
 }: Inputs) => {
@@ -90,12 +89,13 @@ const setupBootstrapperApp = async ({
     bootstrapperApp.type === "msi"
       ? {
           principalId: bootstrapperApp.principalId,
-          principalType: "MSI",
+          principalType: "ServicePrincipal", // It appears that in Azure role assignments, even MSIs will get this principal type instead of "MSI",
         }
-      : {
-          principalId: await getCurrentPrincipalId(graphClient),
-          principalType: "User", // TODO how to get this meaningfully via Graph API, or should use some other trick? Maybe examine type of credentials via instanceof ? Only possible way for that to be user is if they are Cli/Device credentials. I guess "ServicePrincipal" is another possibility here?
-        };
+      : await ad.getCurrentPrincipalInfo(graphClient, givenClientId);
+  eventEmitter.emit(
+    "afterResolvingConfigReaderPrincipal",
+    common.deepCopy(envSpecificPipelineConfigReader),
+  );
   switch (bootstrapperApp.type) {
     case "sp":
       {
@@ -128,6 +128,7 @@ const setupBootstrapperApp = async ({
           keyPEM,
           certPEM,
           configReaderPrincipalId: envSpecificPipelineConfigReader.principalId,
+          configSecretName: bootstrapperApp.configSecretName,
         };
         bootstrapperCredentials = new id.ClientCertificateCredential(
           tenantId,
@@ -157,7 +158,7 @@ const setupBootstrapperApp = async ({
     default:
       throw new Error(
         `Unrecognized bootstrapper app kind: "${
-          (bootstrapperApp as BootstrapperAppSP | BootstrapperAppMSI).type
+          (bootstrapperApp as BootstrapperApp).type
         }"`,
       );
   }
@@ -199,33 +200,6 @@ const runWithBootstrapper = async (
   });
 };
 
-const graphSelf = t.type(
-  {
-    // ["@odata.context"]: t.literal(
-    //   "https://graph.microsoft.com/v1.0/$metadata#users/$entity"
-    // ),
-    // ["@odata.id"]: validation.urlWithPath,
-    // businessPhones: [],
-    // displayName: validation.nonEmptyString,
-    // givenName: validation.nonEmptyString,
-    // jobTitle: null,
-    // mail: null,
-    // mobilePhone: null,
-    // officeLocation: null,
-    // preferredLanguage: validation.nonEmptyString,
-    // surname: validation.nonEmptyString,
-    // userPrincipalName: validation.nonEmptyString,
-    id: validation.uuid,
-  },
-  "GraphUser",
-);
-
-const getCurrentPrincipalId = async (graphClient: graph.Client) =>
-  validation.decodeOrThrow(graphSelf.decode, await graphClient.api("/me").get())
-    .id;
-
 export const constructVaultName = pulumiSetup.constructVaultName;
-export const constructBootstrapperAppAuthSecretName =
-  pulumiSetup.constructBootstrapperAppAuthSecretName;
 export const tryGetSecretValue = pulumiSetup.tryGetSecretValue;
 export const BEGIN_CERTIFICATE = certs.BEGIN_CERTIFICATE;
