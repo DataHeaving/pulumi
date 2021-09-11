@@ -13,15 +13,19 @@ export interface RunFromConfigOptions<
   plugins: ReadonlyArray<pulumiAutomation.PulumiPluginDescription>;
   command: TCommand;
   programConfig: pulumi.InlineProgramArgs;
-  additionalParameters?: Partial<
-    {
-      skipDeletePfxPathIfCreated: boolean;
-    } & Omit<
-      pulumiAzure.PulumiAzureBackendStackAcquiringConfig["pulumi"],
-      "auth" | "backendConfig" | "programArgs"
-    >
-  >;
+  additionalParameters?: (
+    envConfig: pulumiAzure.AzureProviderEnvVarsConfig,
+  ) => AdditionalParameters;
 }
+
+export type AdditionalParameters = Partial<
+  {
+    skipDeletePfxPathIfCreated: boolean;
+  } & Omit<
+    pulumiAzure.PulumiAzureBackendStackAcquiringConfig["pulumi"],
+    "auth" | "backendConfig" | "programArgs"
+  >
+>;
 
 export const runPulumiPipelineFromConfig = async <
   TCommand extends pulumiAutomation.PulumiCommand,
@@ -33,12 +37,16 @@ export const runPulumiPipelineFromConfig = async <
   additionalParameters,
   eventEmitters,
 }: RunFromConfigOptions<TCommand>) => {
+  let additionalParametersObject: AdditionalParameters | undefined;
   const { auth, pfx } = await authUtils.configAuthToPulumiAuth(config.auth);
   try {
+    additionalParametersObject = additionalParameters
+      ? additionalParameters({ auth, azure: config.azure })
+      : {};
     return await runPulumiPipeline(
       {
         pulumi: {
-          ...(additionalParameters || {}),
+          ...additionalParametersObject,
           auth,
           backendConfig: config.backend,
           programArgs: programConfig,
@@ -50,7 +58,10 @@ export const runPulumiPipelineFromConfig = async <
       eventEmitters,
     );
   } finally {
-    if (pfx && !(additionalParameters?.skipDeletePfxPathIfCreated === true)) {
+    if (
+      pfx &&
+      !(additionalParametersObject?.skipDeletePfxPathIfCreated === true)
+    ) {
       await fs.rm(pfx.path);
     }
   }

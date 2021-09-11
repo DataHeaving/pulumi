@@ -43,6 +43,15 @@ export const main = async () => {
       : pulumiProgramModule.pulumiProgram;
   const envVarName =
     config?.pipelineConfigEnvName ?? cliConfig.defaultPipelineConfigEnvName;
+  const pipelineConfig = validation.decodeOrThrow(
+    cliConfig.pipelineConfiguration.decode,
+    JSON.parse(
+      env[envVarName] ??
+        doThrow(
+          `Please supply config stored in keyvault secret via "${envVarName}" environment variable.`,
+        ),
+    ),
+  );
   return await functionality.runPulumiPipelineFromConfig({
     // Log to console
     eventEmitters: {
@@ -53,15 +62,7 @@ export const main = async () => {
         .consoleLoggingRunEventEmitterBuilder()
         .createEventEmitter(),
     },
-    config: validation.decodeOrThrow(
-      cliConfig.pipelineConfiguration.decode,
-      JSON.parse(
-        env[envVarName] ??
-          doThrow(
-            `Please supply config stored in keyvault secret via "${envVarName}" environment variable.`,
-          ),
-      ),
-    ),
+    config: pipelineConfig,
     command: command ?? cliConfig.defaultCommand.value,
     plugins: plugins.map((pluginNameOrInfo) =>
       typeof pluginNameOrInfo === "string"
@@ -78,21 +79,51 @@ export const main = async () => {
       ...programConfig,
       program: programConfig.program as pulumi.PulumiFn,
     },
-    // TODO this is fugly, needs better code
     additionalParameters: additionalParameters
-      ? {
-          ...additionalParameters,
-          processEnvVars: additionalParameters.processEnvVars as (
-            envVars: Record<string, string>,
-          ) => Record<string, string>,
-          processLocalWorkspaceOptions:
-            additionalParameters.processLocalWorkspaceOptions as (
-              options: pulumiAzure.InitialLocalWorkspaceOptions,
-            ) => pulumi.LocalWorkspaceOptions,
-        }
+      ? getAdditionalParameters(additionalParameters)
       : undefined,
   });
 };
+
+const getAdditionalParameters =
+  ({
+    processEnvVars,
+    processAdditionalEnvVars,
+    processLocalWorkspaceOptions,
+    ...additionalParameters
+  }: cliConfig.PulumiPipelineAdditionalParameters) =>
+  (
+    envVarConfig: pulumiAzure.AzureProviderEnvVarsConfig,
+  ): functionality.AdditionalParameters => ({
+    ...additionalParameters,
+    // TODO this is fugly, needs better code
+    processEnvVars:
+      processEnvVars || processAdditionalEnvVars
+        ? (envVars) => {
+            let retVal = envVars;
+            if (processEnvVars) {
+              retVal = (
+                processEnvVars as (
+                  envVars: Record<string, string>,
+                ) => Record<string, string>
+              )(retVal);
+            } else {
+              retVal = pulumiAzure.getAzureProviderEnvVars(envVarConfig);
+            }
+            if (processAdditionalEnvVars) {
+              retVal = (
+                processAdditionalEnvVars as (
+                  envVars: Record<string, string>,
+                ) => Record<string, string>
+              )(retVal);
+            }
+            return retVal;
+          }
+        : undefined,
+    processLocalWorkspaceOptions: processLocalWorkspaceOptions as (
+      options: pulumiAzure.InitialLocalWorkspaceOptions,
+    ) => pulumi.LocalWorkspaceOptions,
+  });
 
 const getPulumiCommand = (args: Array<string>) => {
   let command: pulumiAutomation.PulumiCommand | undefined;
