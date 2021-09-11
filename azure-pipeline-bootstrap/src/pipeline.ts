@@ -15,6 +15,7 @@ export interface Inputs {
   credentials: bootstrap.BootstrappingCredentials;
   bootstrapperApp: BootstrapperApp;
   azure: pulumiAzure.AzureCloudInformationFull;
+  targetResources: pulumiSetup.TargetResourcesConfig;
   organization: types.Organization;
   pipelineConfigs: {
     pulumiEncryptionKeyBitsForBootstrapper: number;
@@ -73,6 +74,7 @@ export const main = async ({
   bootstrapperApp,
   organization,
   azure,
+  targetResources,
   namingConventions,
   pipelineConfigs,
 }: Inputs) => {
@@ -140,11 +142,7 @@ export const main = async ({
                     pipelineConfigs.pulumiEncryptionKeyBitsForEnvSpecificPipeline,
                 },
               },
-              targetResources: {
-                cicdRGSuffix: "bootstrap",
-                targetRGSuffix: undefined, // No target RG creation
-                skipTargetRoleAssignment: true, // No "Owner" role assignment to subscription (as we already did it in bootstrap.default)
-              },
+              targetResources,
             }),
         },
       },
