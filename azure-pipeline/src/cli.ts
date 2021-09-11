@@ -175,7 +175,7 @@ const getConfigPath = (args: Array<string>) => {
   if (pathInArgs) {
     args.splice(0, 1);
   }
-  return pathInArgs ? maybePath : "./config/config.json";
+  return maybePath;
 };
 
 const doThrow = <T>(msg: string): T => {
