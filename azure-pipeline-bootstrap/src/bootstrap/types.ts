@@ -3,8 +3,10 @@ import * as validation from "@data-heaving/common-validation";
 import * as id from "@azure/identity";
 import * as graph from "@microsoft/microsoft-graph-client";
 
-export type BootstrappingCredentials = id.TokenCredential &
-  graph.AuthenticationProvider;
+export interface BootstrappingCredentials {
+  credentials: id.TokenCredential & graph.AuthenticationProvider;
+  givenClientId: string | undefined;
+}
 
 export type UpsertResult<T> = T & {
   createNew: boolean;
@@ -109,3 +111,5 @@ export const servicePrincipalAppRoleAssignment = t.type({
 export type ServicePrincipalAppRoleAssignment = t.TypeOf<
   typeof servicePrincipalAppRoleAssignment
 >;
+
+export const AZURE_CLIENT_ID_ENV_NAME = "AZURE_CLIENT_ID";

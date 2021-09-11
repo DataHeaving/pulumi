@@ -1,6 +1,7 @@
 import * as graph from "@microsoft/microsoft-graph-client";
 import * as t from "io-ts";
 import * as validation from "@data-heaving/common-validation";
+import * as pulumi from "@data-heaving/pulumi-azure-pipeline-setup";
 import * as common from "@data-heaving/common";
 import * as crypto from "crypto";
 import * as uuid from "uuid";
@@ -68,6 +69,10 @@ const ensureBootstrapperAppExists = async (
   bootstrapperAppName: string,
 ) => {
   // Don't cache result of client.api as it is stateful
+  // TODO fallback to list-owned-objects ( https://docs.microsoft.com/en-us/graph/api/serviceprincipal-list-ownedobjects?view=graph-rest-1.0&tabs=http ) if we get:
+  // statusCode: 403,
+  // code: 'Authorization_RequestDenied',
+  // body: '{"code":"Authorization_RequestDenied","message":"Insufficient privileges to complete the operation.","innerError":{"date":"2021-09-11T08:43:56","request-id":"9bf79d05-2480-4e88-afaa-68f0825c969b","client-request-id":"d42c428b-0789-f35e-040a-d8ef199f3296"}}'
   const existingApp = validation.decodeOrThrow(
     graphAPIListOf(types.application).decode,
     await client
@@ -430,3 +435,72 @@ const graphAPIListOf = <TType extends t.Mixed>(item: TType) =>
     },
     "APIResult",
   );
+
+const graphSelf = t.type(
+  {
+    // ["@odata.context"]: t.literal(
+    //   "https://graph.microsoft.com/v1.0/$metadata#users/$entity"
+    // ),
+    // ["@odata.id"]: validation.urlWithPath,
+    // businessPhones: [],
+    // displayName: validation.nonEmptyString,
+    // givenName: validation.nonEmptyString,
+    // jobTitle: null,
+    // mail: null,
+    // mobilePhone: null,
+    // officeLocation: null,
+    // preferredLanguage: validation.nonEmptyString,
+    // surname: validation.nonEmptyString,
+    // userPrincipalName: validation.nonEmptyString,
+    id: validation.uuid,
+  },
+  "GraphUser",
+);
+
+export const getCurrentPrincipalInfo = async (
+  graphClient: graph.Client,
+  givenClientId: string | undefined,
+): Promise<pulumi.EnvSpecificPipelineConfigReader> => {
+  // TODO handle situations when client ID is given but it is not actually used
+  if (givenClientId) {
+    const id = validation.decodeOrThrow(
+      graphAPIListOf(types.servicePrincipal).decode,
+      await graphClient
+        .api(`${spGraphApi}`)
+        .filter(`appId eq '${givenClientId}'`)
+        .get(),
+    ).value[0]?.id;
+    if (!id) {
+      throw new Error(
+        `Could not find corresponding SP for client ID ${givenClientId}.`,
+      );
+    }
+    return {
+      principalId: id,
+      principalType: "ServicePrincipal",
+    };
+  } else {
+    return {
+      principalId: validation.decodeOrThrow(
+        graphSelf.decode,
+        await graphClient.api("/me").get(),
+      ).id,
+      principalType: "User",
+    };
+  }
+  // try {
+  // } catch (e) {
+  //   if (
+  //     e instanceof graph.GraphError &&
+  //     e.message ===
+  //       "/me request is only valid with delegated authentication flow."
+  //   ) {
+  //     if (givenClientId) {
+  //     } else {
+  //       throw new Error("Not logged in as user nor as service principal...?");
+  //     }
+  //   } else {
+  //     throw e;
+  //   }
+  // }
+};

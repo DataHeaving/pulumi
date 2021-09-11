@@ -105,6 +105,8 @@ const loadConfig = async (
   if (bootstrapperAppParsed.type === "sp") {
     const { authentication, envSpecificPulumiPipelineSPAuth } =
       bootstrapperAppParsed;
+    const configSecretName =
+      bootstrapperAppParsed.configSecretName ?? "bootstrapper-auth";
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "pulumi-bootstrap-"));
     const keyAndCertPaths = {
       keyPath: path.join(tempDir, `key-${uuid.v4()}.pem`),
@@ -113,12 +115,15 @@ const loadConfig = async (
     };
     let keyAndCertPEM: string | undefined;
     try {
-      keyAndCertPEM = await pulumiSetup.tryGetSecretValue(credentials, {
-        kvURL: `https://${pulumiSetup.constructVaultName(
-          organization.name,
-        )}.vault.azure.net`,
-        secretName: pulumiSetup.constructBootstrapperAppAuthSecretName(),
-      });
+      keyAndCertPEM = await pulumiSetup.tryGetSecretValue(
+        credentials.credentials,
+        {
+          kvURL: `https://${pulumiSetup.constructVaultName(
+            organization.name,
+          )}.vault.azure.net`,
+          secretName: configSecretName,
+        },
+      );
     } catch (e) {
       if (
         e instanceof id.CredentialUnavailable ||
@@ -128,6 +133,13 @@ const loadConfig = async (
       }
       // Ignore otherwise
     }
+
+    // eslint-disable-next-line no-console
+    console.log(
+      `${
+        keyAndCertPEM ? "Found previously stored" : "Will generate new"
+      } service principal credentials`,
+    );
 
     if (keyAndCertPEM) {
       const beginCertIdx = keyAndCertPEM.search(pulumiSetup.BEGIN_CERTIFICATE);
@@ -158,6 +170,7 @@ const loadConfig = async (
               envSpecificPulumiPipelineSPAuth?.validityHours ?? 90000, // A bit over 10yrs
           }
         : undefined,
+      configSecretName,
     };
   } else {
     bootstrapperApp = bootstrapperAppParsed;
@@ -192,7 +205,9 @@ const loadConfig = async (
         .consoleLoggingBootstrapPipelineEventEmitterBuilder()
         .createEventEmitter(),
       bootstrapEventEmitter: program
-        .consoleLoggingBootstrapEventEmitterBuilder()
+        .consoleLoggingBootstrapEventEmitterBuilder(
+          parsed.logSubscriptionIdToConsole,
+        )
         .createEventEmitter(),
       pulumiEventEmitters: {
         initCommandEventEmitter: pulumiAutomation
@@ -220,7 +235,8 @@ const getCredentials = (
     azure,
     bootstrapperApp,
   }: Pick<cmdConfig.Config, "azure" | "bootstrapperApp">,
-) => {
+): pulumiSetup.BootstrappingCredentials => {
+  const givenClientId = env["AZURE_CLIENT_ID"];
   const credentialsInAttemptOrder = common
     .deduplicate(authenticationKinds, (a) => a)
     .map((authentication) => {
@@ -245,31 +261,39 @@ const getCredentials = (
           return new id.EnvironmentCredential();
         case "cli":
           return new id.AzureCliCredential();
-        case "msi":
-          return new id.ManagedIdentityCredential();
+        case "msi": {
+          // The typings are a bit weird for this one
+          return givenClientId
+            ? new id.ManagedIdentityCredential(givenClientId)
+            : new id.ManagedIdentityCredential();
+        }
       }
     });
-  return new ChainedCachingTokenFixedScopesCredential(
-    credentialsInAttemptOrder.map((credential) => ({
-      credential,
-      passGivenTokens: true, // Currently can only handle 1 scope at a time, otherwise will get error from OAuth endpoint "AADSTS70011: The provided request must include a 'scope' input parameter. The provided value for the input parameter 'scope' is not valid. The scope <scope list> openid profile offline_access is not valid. static scope limit exceeded."
-    })),
-    [
-      "https://management.azure.com/.default", // For role assignment for bootstrapper app
-    ].concat(
-      bootstrapperApp.type === "msi"
-        ? []
-        : [
-            "https://vault.azure.net/.default", // For checking for existing bootstrapper app cert config
-            OAUTH_SCOPE_MICROSOFT_GRAPH, // For creating and setting up bootstrapper SP in AAD
-          ],
+  return {
+    credentials: new ChainedCachingTokenFixedScopesCredential(
+      credentialsInAttemptOrder.map((credential) => ({
+        credential,
+        passGivenTokens: true, // Currently can only handle 1 scope at a time, otherwise will get error from OAuth endpoint "AADSTS70011: The provided request must include a 'scope' input parameter. The provided value for the input parameter 'scope' is not valid. The scope <scope list> openid profile offline_access is not valid. static scope limit exceeded."
+      })),
+      [
+        "https://management.azure.com/.default", // For role assignment for bootstrapper app
+      ].concat(
+        bootstrapperApp.type === "msi"
+          ? []
+          : [
+              "https://vault.azure.net/.default", // For checking for existing bootstrapper app cert config
+              OAUTH_SCOPE_MICROSOFT_GRAPH, // For creating and setting up bootstrapper SP in AAD
+            ],
+      ),
     ),
-  );
+    givenClientId,
+  };
 };
 
 /**
  * We are using multiple client libs and scopes during first stage of bootstrapping.
- * The libs nor the id.XYZCredential classes do not cache the token -> we have to do it ourselves to avoid prompting for device code multiple times when using id.DeviceCodeCredential.
+ * Therefore it is good idea to provide centralized credential cache, especially since the Graph library does not even cache its token.
+ * This also avoids prompting for device code on every single call when using id.DeviceCodeCredential.
  */
 class ChainedCachingTokenFixedScopesCredential
   implements id.TokenCredential, graph.AuthenticationProvider
@@ -304,14 +328,12 @@ class ChainedCachingTokenFixedScopesCredential
   public async getAccessToken(
     authenticationProviderOptions?: graph.AuthenticationProviderOptions,
   ) {
-    this.checkScopesFromArgs(authenticationProviderOptions?.scopes ?? []);
-    // This is used by graph.Client -> pass graph scope if override needed
-    return (
-      await this.doGetToken(
-        undefined,
-        authenticationProviderOptions?.scopes ?? [OAUTH_SCOPE_MICROSOFT_GRAPH],
-      )
-    ).token;
+    // This is used by graph.Client -> use the default endpoint if no override passed
+    const scopes = authenticationProviderOptions?.scopes ?? [
+      OAUTH_SCOPE_MICROSOFT_GRAPH,
+    ];
+    this.checkScopesFromArgs(scopes);
+    return (await this.doGetToken(undefined, scopes)).token;
   }
 
   private async doGetToken(
@@ -329,7 +351,7 @@ class ChainedCachingTokenFixedScopesCredential
           retVal = existing;
         } else {
           let acquiredTokenOrError: id.AccessToken | Error;
-          const credential = credentialInfo.credential;
+          const { credential } = credentialInfo;
           try {
             acquiredTokenOrError =
               (await (typeof credential === "function"

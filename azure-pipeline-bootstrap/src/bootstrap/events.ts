@@ -4,10 +4,14 @@ import { ResourceManagementModels } from "@azure/arm-resources";
 import { StorageManagementModels } from "@azure/arm-storage";
 import { KeyVaultKey } from "@azure/keyvault-keys";
 import * as common from "@data-heaving/common";
+import * as setup from "@data-heaving/pulumi-azure-pipeline-setup";
 import * as types from "./types";
 
 // This is virtual interface - no instances implementing this are ever created
 export interface VirtualBootstrapEvents {
+  // Generic
+  afterResolvingConfigReaderPrincipal: setup.EnvSpecificPipelineConfigReader;
+
   // AD
   afterADApplicationExists: types.UpsertResult<{
     application: types.Application;
@@ -61,6 +65,7 @@ export const createBootstrapEventEmitterBuilder = () =>
   new common.EventEmitterBuilder<VirtualBootstrapEvents>();
 
 export const consoleLoggingBootstrapEventEmitterBuilder = (
+  logSubscriptionId?: boolean,
   logMessagePrefix?: Parameters<typeof common.createConsoleLogger>[0],
   builder?: common.EventEmitterBuilder<VirtualBootstrapEvents>,
   consoleAbstraction?: common.ConsoleAbstraction,
@@ -74,6 +79,17 @@ export const consoleLoggingBootstrapEventEmitterBuilder = (
     consoleAbstraction,
   );
 
+  const processStringWithSubscriptionID = (str: string | undefined) => {
+    if (str && logSubscriptionId !== true) {
+      // Remove first 51 characters ("/subscriptions/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")
+      str = str.substr(51);
+      if (str.length === 0) {
+        str = "whole subscription";
+      }
+    }
+    return str;
+  };
+
   const logRoleAssignment = (
     assignment: AuthorizationManagementModels.RoleAssignment,
     description: string,
@@ -83,8 +99,16 @@ export const consoleLoggingBootstrapEventEmitterBuilder = (
         assignment.principalType
       }) to role ${lastItem(
         assignment.roleDefinitionId?.split("/"),
-      )} on scope ${assignment.scope}`,
+      )} on scope ${processStringWithSubscriptionID(assignment.scope)}`,
     );
+
+  builder.addEventListener("afterResolvingConfigReaderPrincipal", (arg) =>
+    logger(
+      `Any stored SP authentication secrets will be readable by: ${JSON.stringify(
+        arg,
+      )}`,
+    ),
+  );
 
   builder.addEventListener("afterADApplicationExists", (arg) =>
     logger(
