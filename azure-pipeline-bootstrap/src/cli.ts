@@ -58,8 +58,14 @@ const readStream = async (stream: Readable) => {
   return Buffer.concat(chunks).toString("utf8");
 };
 
-const readFromFileOrStdin = (path: string) => {
-  return path === "-" ? readStream(stdin) : fs.readFile(path, "utf8");
+const STDIN = "-";
+const ENV_PREFIX = "env:";
+const readFromFileOrStdinOrEnv = (pathOrEnvName: string) => {
+  return pathOrEnvName === STDIN
+    ? readStream(stdin)
+    : pathOrEnvName.startsWith(ENV_PREFIX)
+    ? env[pathOrEnvName.substr(ENV_PREFIX.length)] ?? ""
+    : fs.readFile(pathOrEnvName, "utf8");
 };
 
 const getDoChanges = (args: Array<string>) => {
@@ -76,7 +82,11 @@ const getDoChanges = (args: Array<string>) => {
 const getConfigPath = (args: Array<string>) => {
   const maybePath = args[0];
   const pathInArgs =
-    !!maybePath && (maybePath === "-" || maybePath.search(/^[./]/) === 0);
+    !!maybePath &&
+    (maybePath === STDIN ||
+      maybePath.startsWith(ENV_PREFIX) ||
+      maybePath.startsWith(".") ||
+      maybePath.startsWith("/"));
 
   if (pathInArgs) {
     args.splice(0, 1);
@@ -90,7 +100,7 @@ const loadConfig = async (
 ) => {
   const fullConfig = validation.decodeOrThrow(
     cmdConfig.config.decode,
-    JSON.parse(await readFromFileOrStdin(configPath)),
+    JSON.parse(await readFromFileOrStdinOrEnv(configPath)),
   );
   const credentials = getCredentials(authenticationKinds, fullConfig);
   const { bootstrapperApp: bootstrapperAppParsed, ...parsed } = fullConfig;
