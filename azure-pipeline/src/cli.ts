@@ -3,7 +3,7 @@ import * as pulumi from "@pulumi/pulumi/automation";
 import * as validation from "@data-heaving/common-validation";
 import * as pulumiAzure from "@data-heaving/pulumi-azure";
 import * as pulumiAutomation from "@data-heaving/pulumi-automation";
-import { argv, stdin, env } from "process";
+import { argv, stdin, env, exit } from "process";
 import * as fs from "fs/promises";
 import { Readable } from "stream";
 import * as cliConfig from "./cli-config";
@@ -26,7 +26,7 @@ export const main = async () => {
   const config = configFilePath
     ? validation.decodeOrThrow(
         cliConfig.configuration.decode,
-        JSON.parse(await readFromFileOrStdin(configFilePath)),
+        JSON.parse(await readFromFileOrStdinOrEnv(configFilePath)),
       )
     : undefined;
 
@@ -94,17 +94,6 @@ export const main = async () => {
   });
 };
 
-const getConfigPath = (args: Array<string>) => {
-  const maybePath = args[0];
-  const pathInArgs =
-    !!maybePath && (maybePath === "-" || maybePath.search(/^[./]/) === 0);
-
-  if (pathInArgs) {
-    args.splice(0, 1);
-  }
-  return maybePath;
-};
-
 const getPulumiCommand = (args: Array<string>) => {
   let command: pulumiAutomation.PulumiCommand | undefined;
   if (args.length > 0) {
@@ -122,8 +111,40 @@ const readStream = async (stream: Readable) => {
   return Buffer.concat(chunks).toString("utf8");
 };
 
-const readFromFileOrStdin = (path: string) => {
-  return path === "-" ? readStream(stdin) : fs.readFile(path, "utf8");
+const STDIN = "-";
+const ENV_PREFIX = "env:";
+const readFromFileOrStdinOrEnv = (pathOrEnvName: string) => {
+  let result: () => Promise<string>;
+  let source: string;
+  if (pathOrEnvName === STDIN) {
+    result = () => readStream(stdin);
+    source = "stdin";
+  } else if (pathOrEnvName.startsWith(ENV_PREFIX)) {
+    const envVarName = pathOrEnvName.substr(ENV_PREFIX.length);
+    result = () => Promise.resolve(env[envVarName] ?? "");
+    source = `environment variable "${envVarName}"`;
+  } else {
+    result = () => fs.readFile(pathOrEnvName, "utf8");
+    source = `file at path "${pathOrEnvName}"`;
+  }
+  // eslint-disable-next-line no-console
+  console.log(`Reading configuration from ${source}.`);
+  return result();
+};
+
+const getConfigPath = (args: Array<string>) => {
+  const maybePath = args[0];
+  const pathInArgs =
+    !!maybePath &&
+    (maybePath === STDIN ||
+      maybePath.startsWith(ENV_PREFIX) ||
+      maybePath.startsWith(".") ||
+      maybePath.startsWith("/"));
+
+  if (pathInArgs) {
+    args.splice(0, 1);
+  }
+  return pathInArgs ? maybePath : "./config/config.json";
 };
 
 const doThrow = <T>(msg: string): T => {
@@ -136,5 +157,6 @@ void (async () => {
   } catch (e) {
     // eslint-disable-next-line no-console
     console.error("ERROR", e);
+    exit(1);
   }
 })();
