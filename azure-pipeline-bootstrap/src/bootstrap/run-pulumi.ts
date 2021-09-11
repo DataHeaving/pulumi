@@ -184,6 +184,7 @@ const ensureKeyVaultIsConfigured = async (
       enabledForDiskEncryption: false,
       enabledForTemplateDeployment: false,
       enableRbacAuthorization: true,
+      createMode: "recover", // In order to recover previously deleted soft-deletable vaults
     },
   });
   const {
