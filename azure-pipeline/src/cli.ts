@@ -81,9 +81,7 @@ export const main = async () => {
       ...programConfig,
       program: programConfig.program as pulumi.PulumiFn,
     },
-    additionalParameters: additionalParameters
-      ? getAdditionalParameters(additionalParameters)
-      : undefined,
+    additionalParameters: getAdditionalParameters(additionalParameters ?? {}),
   });
 
   const pulumiCommandOutput =
