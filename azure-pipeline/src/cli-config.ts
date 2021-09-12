@@ -1,5 +1,6 @@
 import * as t from "io-ts";
 import * as validation from "@data-heaving/common-validation";
+import * as pulumiAzure from "@data-heaving/pulumi-azure";
 import { cwd } from "process";
 
 /**
@@ -47,6 +48,11 @@ export const createDefaultPulumiCommandOutputFile = () =>
 /**
  * This runtime validation imitates compile-time type "PipelineConfig" in "@data-heaving/pulumi-azure-pipeline-config" module
  */
+const azure = t.type({
+  tenantId: validation.uuid,
+  subscriptionId: validation.uuid,
+});
+export type AzureEnvironment = t.TypeOf<typeof azure>;
 export const pipelineConfiguration = t.type(
   {
     backend: t.type({
@@ -54,10 +60,7 @@ export const pipelineConfiguration = t.type(
       storageContainerName: validation.nonEmptyString,
       encryptionKeyURL: validation.urlWithPath,
     }),
-    azure: t.type({
-      tenantId: validation.uuid,
-      subscriptionId: validation.uuid,
-    }),
+    azure,
     auth: t.union([
       t.type({
         type: t.literal("msi"),
@@ -116,7 +119,7 @@ const pulumiPipelineExport = t.intersection(
         programConfig: t.type({
           projectName: validation.nonEmptyString,
           stackName: validation.nonEmptyString,
-          program: t.Function,
+          program: t.Function, // Actual type: AzureBackendPulumiProgram
         }),
       },
       "PulumiProgramMandatory",
@@ -124,12 +127,22 @@ const pulumiPipelineExport = t.intersection(
     t.partial(
       {
         additionalParameters,
+        beforePulumiCommandExecution: t.Function, // Actual type: AzureBackendPulumiProgram<void>
       },
       "PulumiProgramOptional",
     ),
   ],
   "PulumiProgram",
 );
+
+export interface AzureBackendPulumiProgramArgs {
+  auth: pulumiAzure.PulumiAzureBackendAuth;
+  azure: AzureEnvironment;
+}
+
+export type AzureBackendPulumiProgram<
+  TResult = void | Record<string, unknown>,
+> = (args: AzureBackendPulumiProgramArgs) => Promise<TResult>;
 
 /**
  * This is runtime validation for JS module containing Pulumi program.
