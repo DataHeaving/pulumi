@@ -22,15 +22,27 @@ export const configuration = t.partial(
     pipelineConfigEnvName: validation.nonEmptyString,
     /**
      * Path to .js file (without .js suffix) where pulumi program is located. Must have default export, or export called "pulumiProgram".
-     * If not specified, the value of @see defaultEntrypointFileName is used.
+     * If not specified, the value of @see createDefaultEntrypointFileName is used.
      */
     entrypointModuleName: validation.nonEmptyString,
+
+    /**
+     * Path where the output of Pulumi command execution should be stored for further processing.
+     * If not specified, the value of @see createDefaultPulumiCommandOutputFile is used.
+     */
+    pulumiCommandOutputFile: validation.nonEmptyString,
   },
   "PulumiAzureBackendPipelineConfiguration",
 );
 
 export const defaultPipelineConfigEnvName = "AZURE_PIPELINE_CONFIG";
 export const createDefaultEntrypointFileName = () => `${cwd()}/dist/index.js`;
+/**
+ * Since this CLI is designed to be run with Docker, the default path for Pulumi command result file is `/pulumi-out/pulumi-out.json`.
+ * @returns The default path for Pulumi command result file
+ */
+export const createDefaultPulumiCommandOutputFile = () =>
+  "/pulumi-out/pulumi-out.json";
 
 /**
  * This runtime validation imitates compile-time type "PipelineConfig" in "@data-heaving/pulumi-azure-pipeline-config" module
