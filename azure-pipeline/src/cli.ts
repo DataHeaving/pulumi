@@ -3,6 +3,7 @@ import * as pulumi from "@pulumi/pulumi/automation";
 import * as validation from "@data-heaving/common-validation";
 import * as pulumiAzure from "@data-heaving/pulumi-azure";
 import * as pulumiAutomation from "@data-heaving/pulumi-automation";
+import * as uuid from "uuid";
 import { argv, stdin, env, exit } from "process";
 import * as fs from "fs/promises";
 import { Readable } from "stream";
@@ -17,7 +18,7 @@ export const main = async () => {
 
   // We must do parsing sequentially in this order, as getDoChanges and getConfigPath may modify arg array
   const configFilePath = getConfigPath(args);
-  const command = getPulumiCommand(args);
+  const givenCommand = getPulumiCommand(args);
 
   if (args.length > 0) {
     throw new Error("There was extra data passed as command-line arguments.");
@@ -52,7 +53,8 @@ export const main = async () => {
         ),
     ),
   );
-  return await functionality.runPulumiPipelineFromConfig({
+  const command = givenCommand ?? cliConfig.defaultCommand.value;
+  const pulumiCommandResult = await functionality.runPulumiPipelineFromConfig({
     // Log to console
     eventEmitters: {
       initCommandEventEmitter: pulumiAutomation
@@ -63,7 +65,7 @@ export const main = async () => {
         .createEventEmitter(),
     },
     config: pipelineConfig,
-    command: command ?? cliConfig.defaultCommand.value,
+    command,
     plugins: plugins.map((pluginNameOrInfo) =>
       typeof pluginNameOrInfo === "string"
         ? pluginNameOrInfo
@@ -83,6 +85,30 @@ export const main = async () => {
       ? getAdditionalParameters(additionalParameters)
       : undefined,
   });
+
+  const pulumiCommandOutput =
+    config?.pulumiCommandOutputFile ??
+    cliConfig.createDefaultPulumiCommandOutputFile();
+  if (pulumiCommandOutput.length > 0) {
+    await fs.writeFile(
+      pulumiCommandOutput,
+      JSON.stringify({
+        command,
+        ...("outputs" in pulumiCommandResult
+          ? {
+              outputs: pulumiCommandResult.outputs,
+              summary: pulumiCommandResult.summary,
+            }
+          : {
+              summary:
+                "changeSummary" in pulumiCommandResult
+                  ? pulumiCommandResult.changeSummary
+                  : pulumiCommandResult.summary,
+            }),
+      }),
+      "utf8",
+    );
+  }
 };
 
 const getAdditionalParameters =
@@ -120,9 +146,20 @@ const getAdditionalParameters =
             return retVal;
           }
         : undefined,
-    processLocalWorkspaceOptions: processLocalWorkspaceOptions as (
-      options: pulumiAzure.InitialLocalWorkspaceOptions,
-    ) => pulumi.LocalWorkspaceOptions,
+    processLocalWorkspaceOptions: (opts) => {
+      let retVal: pulumi.LocalWorkspaceOptions = opts;
+      // We must modify pulumiHome when the pipeline will be running in GitHub workflow inside docker image (at least on Node 16). Otherwise there will be error:
+      // fatal: error An assertion has failed: could not get workspace path. source error: getting current user: luser: unable to get current user
+      retVal.pulumiHome = `/tmp/${uuid.v4()}`;
+      if (processLocalWorkspaceOptions) {
+        retVal = (
+          processLocalWorkspaceOptions as (
+            options: pulumiAzure.InitialLocalWorkspaceOptions,
+          ) => pulumi.LocalWorkspaceOptions
+        )(opts);
+      }
+      return retVal;
+    },
   });
 
 const getPulumiCommand = (args: Array<string>) => {
