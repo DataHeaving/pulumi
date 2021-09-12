@@ -9,6 +9,7 @@ import * as fs from "fs/promises";
 import { Readable } from "stream";
 import * as cliConfig from "./cli-config";
 import * as functionality from ".";
+import * as os from "os";
 
 // Command-line args:
 // [path-to-config-file-or-stdin, [pulumi-command=preview]]
@@ -148,7 +149,7 @@ const getAdditionalParameters =
       let retVal: pulumi.LocalWorkspaceOptions = opts;
       // We must modify pulumiHome when the pipeline will be running in GitHub workflow inside docker image (at least on Node 16). Otherwise there will be error:
       // fatal: error An assertion has failed: could not get workspace path. source error: getting current user: luser: unable to get current user
-      retVal.pulumiHome = `/tmp/${uuid.v4()}`;
+      retVal.pulumiHome = `${os.tmpdir()}/${uuid.v4()}`;
       if (processLocalWorkspaceOptions) {
         retVal = (
           processLocalWorkspaceOptions as (
@@ -210,7 +211,7 @@ const getConfigPath = (args: Array<string>) => {
   if (pathInArgs) {
     args.splice(0, 1);
   }
-  return maybePath;
+  return pathInArgs ? maybePath : undefined;
 };
 
 const doThrow = <T>(msg: string): T => {
