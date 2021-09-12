@@ -135,6 +135,8 @@ const pulumiPipelineExport = t.intersection(
   "PulumiProgram",
 );
 
+export type PulumiPipelineExport = t.TypeOf<typeof pulumiPipelineExport>;
+
 export interface AzureBackendPulumiProgramArgs {
   auth: pulumiAzure.PulumiAzureBackendAuth;
   azure: AzureEnvironment;

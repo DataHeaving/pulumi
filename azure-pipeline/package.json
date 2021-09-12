@@ -1,6 +1,6 @@
 {
   "name": "@data-heaving/pulumi-azure-pipeline",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "author": {
     "name": "Stanislav Muhametsin",
     "email": "346799+stazz@users.noreply.github.com",
