@@ -12,7 +12,9 @@ export interface RunFromConfigOptions<
   config: config.PipelineConfig;
   plugins: ReadonlyArray<pulumiAutomation.PulumiPluginDescription>;
   command: TCommand;
-  programConfig: pulumi.InlineProgramArgs;
+  programConfig: (
+    auth: pulumiAzure.PulumiAzureBackendAuth,
+  ) => Promise<pulumi.InlineProgramArgs>;
   additionalParameters?: (
     envConfig: pulumiAzure.AzureProviderEnvVarsConfig,
   ) => AdditionalParameters;
@@ -49,7 +51,7 @@ export const runPulumiPipelineFromConfig = async <
           ...additionalParametersObject,
           auth,
           backendConfig: config.backend,
-          programArgs: programConfig,
+          programArgs: await programConfig(auth),
         },
         azure: config.azure,
       },

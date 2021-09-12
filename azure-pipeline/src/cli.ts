@@ -39,7 +39,12 @@ export const main = async () => {
         cliConfig.createDefaultEntrypointFileName()
     ),
   );
-  const { plugins, programConfig, additionalParameters } =
+  const {
+    plugins,
+    programConfig,
+    additionalParameters,
+    beforePulumiCommandExecution,
+  } =
     "default" in pulumiProgramModule
       ? pulumiProgramModule.default
       : pulumiProgramModule.pulumiProgram;
@@ -78,9 +83,23 @@ export const main = async () => {
               }`,
           }),
     ),
-    programConfig: {
-      ...programConfig,
-      program: programConfig.program as pulumi.PulumiFn,
+    programConfig: async (auth) => {
+      const programArgs = {
+        auth,
+        azure: pipelineConfig.azure,
+      };
+      if (beforePulumiCommandExecution) {
+        await (
+          beforePulumiCommandExecution as cliConfig.AzureBackendPulumiProgram<void>
+        )(programArgs);
+      }
+      return {
+        ...programConfig,
+        program: () =>
+          (programConfig.program as cliConfig.AzureBackendPulumiProgram)(
+            programArgs,
+          ),
+      };
     },
     additionalParameters: getAdditionalParameters(additionalParameters ?? {}),
   });
