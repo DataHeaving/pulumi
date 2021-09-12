@@ -31,7 +31,7 @@ export const configuration = t.partial(
      * Path where the output of Pulumi command execution should be stored for further processing.
      * If not specified, the value of @see createDefaultPulumiCommandOutputFile is used.
      */
-    pulumiCommandOutputFile: validation.nonEmptyString,
+    pulumiCommandOutputFile: t.string,
   },
   "PulumiAzureBackendPipelineConfiguration",
 );
