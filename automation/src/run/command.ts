@@ -23,6 +23,7 @@ export const runPulumiInfrastructureCommandForStack = <
       args = dummy<"preview">([
         {
           onOutput,
+          diff: true,
         },
       ]);
       break;
@@ -36,6 +37,13 @@ export const runPulumiInfrastructureCommandForStack = <
       break;
     case "destroy":
       args = dummy<"destroy">([
+        {
+          onOutput,
+        },
+      ]);
+      break;
+    case "refresh":
+      args = dummy<"refresh">([
         {
           onOutput,
         },
