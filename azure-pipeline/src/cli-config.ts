@@ -8,7 +8,13 @@ import { cwd } from "process";
  */
 export const defaultCommand = t.literal("preview");
 export const pulumiCommand = t.union(
-  [defaultCommand, t.literal("up"), t.literal("destroy"), t.undefined],
+  [
+    defaultCommand,
+    t.literal("up"),
+    t.literal("destroy"),
+    t.literal("refresh"),
+    t.undefined,
+  ],
   "PulumiCommand",
 ); // Which pulumi command to execute
 
