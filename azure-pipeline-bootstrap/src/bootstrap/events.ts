@@ -52,6 +52,10 @@ export interface VirtualBootstrapEvents {
     secretName: string;
     secretValue: string;
   }>;
+  bootstrapperPipelineAuthSecretCreatedOrUpdated: types.UpsertResult<{
+    secretName: string;
+    secretValue: string;
+  }>;
 }
 
 export type CredentialInfo = Pick<
@@ -251,7 +255,17 @@ export const consoleLoggingBootstrapEventEmitterBuilder = (
       logger(
         `Successfully ${
           createNew ? "set" : "ensured existence of "
-        } key vault secret "${secretName}"`,
+        } key vault secret "${secretName}" containing bootstrapper certificate authentication information.`,
+      ),
+  );
+
+  builder.addEventListener(
+    "bootstrapperPipelineAuthSecretCreatedOrUpdated",
+    ({ createNew, secretName }) =>
+      logger(
+        `Successfully ${
+          createNew ? "set" : "ensured existence of "
+        } key vault secret "${secretName}" containing bootstrapper pipeline run information.`,
       ),
   );
 

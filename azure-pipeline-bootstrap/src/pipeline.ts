@@ -22,6 +22,7 @@ export interface Inputs {
     pulumiEncryptionKeyBitsForEnvSpecificPipeline: number;
   };
   namingConventions?: NamingConventions;
+  bootstrapperPipelineConfigSecretName?: string | undefined;
 }
 
 export type PulumiPipelineEventEmitters = {
@@ -77,6 +78,7 @@ export const main = async ({
   targetResources,
   namingConventions,
   pipelineConfigs,
+  bootstrapperPipelineConfigSecretName,
 }: Inputs) => {
   const { bootstrapEventEmitter, pipelineEventEmitter, pulumiEventEmitters } =
     eventEmitters;
@@ -93,6 +95,7 @@ export const main = async ({
     pulumiEncryptionKeyBits:
       pipelineConfigs.pulumiEncryptionKeyBitsForBootstrapper,
     bootstrapperApp: getBootstrapAppForSetup(bootstrapperApp, organization),
+    bootstrapperPipelineConfigSecretName,
   });
   pipelineEventEmitter?.emit("beforeRunningPulumiPortion", {
     organization: common.deepCopy(organization),

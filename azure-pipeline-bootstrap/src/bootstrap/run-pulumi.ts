@@ -8,6 +8,7 @@ import * as keys from "@azure/keyvault-keys";
 import * as secretGetting from "@data-heaving/azure-kv-secret";
 import * as common from "@data-heaving/common";
 import * as pulumiAzure from "@data-heaving/pulumi-azure";
+import * as pipelineConfig from "@data-heaving/pulumi-azure-pipeline-config";
 import * as events from "./events";
 import * as utils from "./run-common";
 
@@ -19,6 +20,13 @@ export interface Inputs {
   organization: OrganizationInfo;
   spAuthStorageConfig: SPAuthStorageConfig | undefined;
   pulumiEncryptionKeyBits: number;
+  storeBootstrapPipelineConfigToKV:
+    | {
+        secretName: string;
+        clientId: string;
+        resourceId: string;
+      }
+    | undefined;
 }
 
 export interface Outputs {
@@ -53,32 +61,35 @@ export const ensureRequireCloudResourcesForPulumiStateExist = async (
   );
 
   const storageContainerName = "bootstrap";
-  const [{ vaultName, encryptionKeyURL }, storageAccountInfo] =
-    await Promise.all([
-      ensureKeyVaultIsConfigured(
-        clientArgs,
-        inputs,
-        cicdRGName,
-        storageContainerName,
-      ),
-      ensureStorageAccountIsConfigured(
-        eventEmitter,
-        clientArgs,
-        organization,
-        cicdRGName,
-        storageContainerName,
-      ),
-    ]);
+  const [kvResult, saResult] = await Promise.all([
+    ensureKeyVaultIsConfigured(
+      clientArgs,
+      inputs,
+      cicdRGName,
+      storageContainerName,
+    ),
+    ensureStorageAccountIsConfigured(
+      eventEmitter,
+      clientArgs,
+      organization,
+      cicdRGName,
+      storageContainerName,
+    ),
+  ]);
 
+  await storeBootstrapAuthToKVIfNeeded(inputs, saResult, kvResult);
+
+  const { vaultName, encryptionKeyURL } = kvResult;
+  const { storageAccountName, storageAccountKey } = saResult;
   return {
     cicdRGName,
     kvName: vaultName,
     backendConfig: {
-      storageAccountName: storageAccountInfo.storageAccountName,
+      storageAccountName,
       storageContainerName,
       encryptionKeyURL,
     },
-    backendStorageAccountKey: storageAccountInfo.storageAccountKey,
+    backendStorageAccountKey: storageAccountKey,
   };
 };
 
@@ -101,7 +112,7 @@ const ensureStorageAccountIsConfigured = async (
   clientArgs: utils.ClientArgs,
   { name: organization, location }: Inputs["organization"],
   rgName: string,
-  containerName: string,
+  storageContainerName: string,
 ) => {
   const { storageAccounts, blobServices, blobContainers } =
     new storage.StorageManagementClient(...clientArgs);
@@ -144,7 +155,7 @@ const ensureStorageAccountIsConfigured = async (
     (async () =>
       eventEmitter.emit(
         "storageAccountContainerCreatedOrUpdated",
-        await blobContainers.create(rgName, saName, containerName, {
+        await blobContainers.create(rgName, saName, storageContainerName, {
           publicAccess: "None",
         }),
       ))(),
@@ -152,6 +163,7 @@ const ensureStorageAccountIsConfigured = async (
 
   return {
     storageAccountName: saName,
+    storageContainerName,
     storageAccountKey:
       (await storageAccounts.listKeys(rgName, saName)).keys?.[0]?.value ?? "",
   };
@@ -166,9 +178,9 @@ const ensureKeyVaultIsConfigured = async (
     principalId,
     spAuthStorageConfig,
     pulumiEncryptionKeyBits,
-  }: Inputs,
+  }: Omit<Inputs, "storeBootstrapAuthToKV">,
   rgName: string,
-  keyName: string,
+  storageContainerName: string,
 ) => {
   const { vaults } = new kv.KeyVaultManagementClient(...clientArgs);
 
@@ -215,7 +227,7 @@ const ensureKeyVaultIsConfigured = async (
   let key: keys.KeyVaultKey | undefined;
   try {
     key = await retryIf403(
-      () => keyClient.getKey(keyName),
+      () => keyClient.getKey(storageContainerName),
       "Waiting for key vault role assignment to propagate for encryption key...",
     );
   } catch (e) {
@@ -226,7 +238,7 @@ const ensureKeyVaultIsConfigured = async (
   {
     let createNew = false;
     if (!key) {
-      key = await keyClient.createRsaKey(keyName, {
+      key = await keyClient.createRsaKey(storageContainerName, {
         keySize: pulumiEncryptionKeyBits,
       });
       createNew = true;
@@ -250,22 +262,12 @@ const ensureKeyVaultIsConfigured = async (
         spAuthStorageConfig.configReaderPrincipalId,
       ),
     );
-    const existingSecretValue = await retryIf403(
-      () =>
-        tryGetSecretValue(clientArgs[0], {
-          kvURL,
-          secretName,
-        }),
-      "Waiting for key vault role assignment to propagate for bootstrapper app auth secret...",
+    const { createNew, secretValue } = await upsertSecret(
+      clientArgs[0],
+      kvURL,
+      secretName,
+      `${spAuthStorageConfig.keyPEM}${spAuthStorageConfig.certPEM}`,
     );
-    const secretValue = `${spAuthStorageConfig.keyPEM}${spAuthStorageConfig.certPEM}`;
-    const createNew = existingSecretValue !== secretValue;
-    if (createNew) {
-      await new secrets.SecretClient(kvURL, clientArgs[0]).setSecret(
-        secretName,
-        secretValue,
-      );
-    }
     eventEmitter.emit("authenticationSecretCreatedOrUpdated", {
       createNew,
       secretName,
@@ -274,6 +276,7 @@ const ensureKeyVaultIsConfigured = async (
   }
 
   return {
+    kvURL,
     vaultName,
     encryptionKeyURL, // eslint-disable-line @typescript-eslint/no-non-null-assertion
   };
@@ -324,3 +327,81 @@ export const tryGetSecretValue = async (
 const isSecretNotFoundError = (error: unknown) =>
   error instanceof secretGetting.SecretDoesNotExistError ||
   (error instanceof http.RestError && error.code === "SecretNotFound");
+
+const upsertSecret = async (
+  credential: auth.TokenCredential,
+  kvURL: string,
+  secretName: string,
+  secretValue: string,
+) => {
+  const existingSecretValue = await retryIf403(
+    () =>
+      tryGetSecretValue(credential, {
+        kvURL,
+        secretName,
+      }),
+    "Waiting for key vault role assignment to propagate for bootstrapper app auth secret...",
+  );
+  const createNew = existingSecretValue !== secretValue;
+  if (createNew) {
+    await new secrets.SecretClient(kvURL, credential).setSecret(
+      secretName,
+      secretValue,
+    );
+  }
+
+  return { createNew, secretValue };
+};
+
+const storeBootstrapAuthToKVIfNeeded = async (
+  inputs: Inputs,
+  {
+    storageAccountName,
+    storageContainerName,
+    storageAccountKey,
+  }: common.DePromisify<ReturnType<typeof ensureStorageAccountIsConfigured>>,
+  {
+    kvURL,
+    encryptionKeyURL,
+  }: common.DePromisify<ReturnType<typeof ensureKeyVaultIsConfigured>>,
+) => {
+  const { storeBootstrapPipelineConfigToKV: storeBootstrapAuthToKV } = inputs;
+  if (storeBootstrapAuthToKV) {
+    const spPipelineAuth: pipelineConfig.PipelineConfig = {
+      auth: inputs.spAuthStorageConfig
+        ? {
+            type: "sp",
+            clientId: storeBootstrapAuthToKV.clientId,
+            keyPEM: inputs.spAuthStorageConfig.keyPEM,
+            certPEM: inputs.spAuthStorageConfig.certPEM,
+            storageAccountKey,
+          }
+        : {
+            type: "msi",
+            clientId: storeBootstrapAuthToKV.clientId,
+            resourceId: storeBootstrapAuthToKV.resourceId,
+          },
+      azure: {
+        tenantId: inputs.azure.tenantId,
+        subscriptionId: inputs.azure.subscriptionId,
+      },
+      backend: {
+        storageAccountName,
+        storageContainerName,
+        encryptionKeyURL,
+      },
+    };
+    const { secretName } = storeBootstrapAuthToKV;
+    const { createNew, secretValue } = await upsertSecret(
+      inputs.credentials,
+      kvURL,
+      secretName,
+      JSON.stringify(spPipelineAuth),
+    );
+    inputs.eventEmitter.emit("bootstrapperPipelineAuthSecretCreatedOrUpdated", {
+      createNew,
+      secretName,
+      secretValue,
+    });
+  }
+};
