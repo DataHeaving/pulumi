@@ -20,6 +20,7 @@ export interface Inputs {
   azure: pulumiAzure.AzureCloudInformationFull;
   organization: pulumiSetup.OrganizationInfo;
   pulumiEncryptionKeyBits: number;
+  bootstrapperPipelineConfigSecretName: string | undefined;
 }
 
 export type BootstrapperApp = BootstrapperAppSP | BootstrapperAppMSI;
@@ -47,6 +48,7 @@ export interface BootstrapperAppMSI {
   type: "msi";
   clientId: string;
   principalId: string;
+  resourceId: string;
 }
 
 export const performBootstrap = async (inputs: Inputs) => {
@@ -96,6 +98,7 @@ const setupBootstrapperApp = async ({
     "afterResolvingConfigReaderPrincipal",
     common.deepCopy(envSpecificPipelineConfigReader),
   );
+  let msiResourceID = "";
   switch (bootstrapperApp.type) {
     case "sp":
       {
@@ -148,6 +151,7 @@ const setupBootstrapperApp = async ({
     case "msi":
       {
         ({ clientId, principalId } = bootstrapperApp);
+        msiResourceID = bootstrapperApp.resourceId;
         bootstrapperCredentials = new id.ManagedIdentityCredential(clientId);
         bootstrapperPulumiAuth = {
           type: "msi",
@@ -175,16 +179,26 @@ const setupBootstrapperApp = async ({
     bootstrapperCredentials,
     bootstrapperPulumiAuth,
     principalId,
+    clientId,
+    msiResourceID,
     spAuthStorageConfig,
     envSpecificPipelineConfigReader,
   };
 };
 
 const runWithBootstrapper = async (
-  { eventEmitter, azure, organization, pulumiEncryptionKeyBits }: Inputs,
+  {
+    eventEmitter,
+    azure,
+    organization,
+    pulumiEncryptionKeyBits,
+    bootstrapperPipelineConfigSecretName,
+  }: Inputs,
   {
     bootstrapperCredentials,
     principalId,
+    clientId,
+    msiResourceID,
     spAuthStorageConfig,
   }: common.DePromisify<ReturnType<typeof setupBootstrapperApp>>,
 ) => {
@@ -197,6 +211,13 @@ const runWithBootstrapper = async (
     principalId,
     spAuthStorageConfig,
     pulumiEncryptionKeyBits,
+    storeBootstrapPipelineConfigToKV: bootstrapperPipelineConfigSecretName
+      ? {
+          secretName: bootstrapperPipelineConfigSecretName,
+          clientId,
+          resourceId: msiResourceID,
+        }
+      : undefined,
   });
 };
 
