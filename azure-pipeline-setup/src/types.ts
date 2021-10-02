@@ -63,7 +63,7 @@ export interface TargetResourcesConfig {
 
 export interface ApplicationRequiredResourceAccesses {
   resourceAppId: string;
-  resourceAccesses: Array<{
+  resourceAccess: Array<{
     id: string;
     type: string;
   }>;
