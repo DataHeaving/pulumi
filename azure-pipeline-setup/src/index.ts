@@ -48,9 +48,20 @@ export const pulumiProgram = async (inputs: Inputs): Promise<Outputs> => {
 
 const createResourcesForSingleEnv = async (
   inputs: Omit<Inputs, "environments">,
-  { name: envName, subscriptionId, location }: types.OrganizationEnvironment,
+  {
+    name: envName,
+    subscriptionId,
+    location,
+    envSpecificAuthOverride,
+  }: types.OrganizationEnvironment,
 ) => {
-  const { auth, ...pulumiPipelineConfig } = inputs.pulumiPipelineConfig;
+  const { auth: defaultAuth, ...pulumiPipelineConfig } =
+    inputs.pulumiPipelineConfig;
+  const auth = constructEnvSpecificAuth(
+    envName,
+    defaultAuth,
+    envSpecificAuthOverride,
+  );
   const envInputs = { ...inputs, envName };
   const { name: orgName } = inputs.organization;
   let authInfo: AuthInfoSP | AuthInfoMSI | undefined = undefined;
@@ -64,6 +75,7 @@ const createResourcesForSingleEnv = async (
       envName,
       organization: orgName,
       certificateConfig: auth.certificateConfig,
+      requiredResourceAccesses: auth.applicationRequiredResourceAccess ?? [],
     });
     const { sp } = adResult;
     authInfo = {
@@ -119,20 +131,51 @@ const createResourcesForSingleEnv = async (
 
 export default pulumiProgram;
 
-export type PulumiPipelineConfig =
-  types.PulumiPipelineConfig<PulumiPipelineAuthInfo>;
-
-export type PulumiPipelineAuthInfo =
-  | PulumiPipelineAuthInfoMSI
-  | PulumiPipelineAuthInfoSP;
-
-type PulumiPipelineAuthInfoMSI = arm.PulumiPipelineAuthInfoMSI;
-type PulumiPipelineAuthInfoSP = {
-  type: "sp";
-  certificateConfig: ad.SPCertificateInfo;
+const constructEnvSpecificAuth = (
+  envName: string,
+  defaultAuth: types.PulumiPipelineAuthInfo,
+  envAuth: Partial<types.PulumiPipelineAuthInfo> | undefined,
+): types.PulumiPipelineAuthInfo => {
+  if (envAuth === undefined) {
+    return defaultAuth;
+  } else {
+    if (envAuth.type === undefined || envAuth.type === defaultAuth.type) {
+      return Object.assign({}, defaultAuth, envAuth);
+    } else {
+      switch (envAuth.type) {
+        case "msi":
+          return {
+            type: "msi",
+            sharedSARGName:
+              envAuth.sharedSARGName ?? doThrow(envName, "sharedSARGName"),
+            sharedSAName:
+              envAuth.sharedSAName ?? doThrow(envName, "sharedSAName"),
+            containerPrefixString:
+              envAuth.containerPrefixString ??
+              doThrow(envName, "containerPrefixString"),
+          };
+        case "sp":
+          return {
+            type: "sp",
+            certificateConfig:
+              envAuth.certificateConfig ??
+              doThrow(envName, "certificateConfig"),
+            applicationRequiredResourceAccess:
+              envAuth.applicationRequiredResourceAccess,
+          };
+      }
+    }
+  }
 };
 
-export type SPCertificateInfo = ad.SPCertificateInfo;
+const doThrow = <T>(envName: string, propName: string): T => {
+  throw new Error(
+    `When specifying different authentication type for environment "${envName}", authentication object must have all necessary properties (including "${propName}".)`,
+  );
+};
+
+export type PulumiPipelineConfig =
+  types.PulumiPipelineConfig<types.PulumiPipelineAuthInfo>;
 
 interface AuthInfoSP {
   type: "sp";

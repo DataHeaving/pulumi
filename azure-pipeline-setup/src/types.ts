@@ -17,6 +17,7 @@ export interface OrganizationEnvironment {
   name: string;
   subscriptionId: string;
   location?: string;
+  envSpecificAuthOverride?: Partial<PulumiPipelineAuthInfo>;
 }
 
 export interface EnvSpecificPipelineConfigReader {
@@ -58,4 +59,33 @@ export interface TargetResourcesConfig {
    * If this is set to true, the "Owner" role assignment to target sub/RG is skipped.
    */
   skipTargetRoleAssignment?: boolean;
+}
+
+export interface ApplicationRequiredResourceAccesses {
+  resourceAppId: string;
+  resourceAccesses: Array<{
+    id: string;
+    type: string;
+  }>;
+}
+
+export interface ApplicationRequiredResourceAccess {
+  id: string;
+  type: string;
+}
+
+export type PulumiPipelineAuthInfo =
+  | PulumiPipelineAuthInfoMSI
+  | PulumiPipelineAuthInfoSP;
+
+export interface PulumiPipelineAuthInfoMSI {
+  type: "msi";
+  sharedSARGName: string;
+  sharedSAName: string;
+  containerPrefixString: string;
+}
+export interface PulumiPipelineAuthInfoSP {
+  type: "sp";
+  certificateConfig: SPCertificateInfo;
+  applicationRequiredResourceAccess?: ReadonlyArray<ApplicationRequiredResourceAccesses>;
 }
