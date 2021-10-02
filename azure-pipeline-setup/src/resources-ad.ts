@@ -23,7 +23,12 @@ const createResourcesForSingleEnv = async ({
 Inputs) => {
   const app = new ad.Application(envName, {
     displayName: `${organization}-${envName}-deployer`,
-    requiredResourceAccesses: [...requiredResourceAccesses],
+    requiredResourceAccesses: requiredResourceAccesses.map(
+      ({ resourceAppId, resourceAccess }) => ({
+        resourceAppId,
+        resourceAccesses: resourceAccess,
+      }),
+    ),
   });
 
   const sp = new ad.ServicePrincipal(envName, {
@@ -61,8 +66,8 @@ Inputs) => {
   });
 
   await Promise.all(
-    requiredResourceAccesses.flatMap(({ resourceAppId, resourceAccesses }) => {
-      return resourceAccesses.map(
+    requiredResourceAccesses.flatMap(({ resourceAppId, resourceAccess }) => {
+      return resourceAccess.map(
         async ({ id }) =>
           new ad.AppRoleAssignment(`${envName}-${resourceAppId}-${id}`, {
             principalObjectId: sp.objectId,
