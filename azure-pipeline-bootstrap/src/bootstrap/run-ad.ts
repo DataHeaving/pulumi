@@ -187,19 +187,11 @@ const ensureCertificateAuthenticationExists = async (
 
 const appRequiredPermissions: Array<types.ApplicationRequiredResourceAccess> = [
   {
-    // resourceAppId: "00000003-0000-0000-c000-000000000000", // Microsoft Graph
-    // resourceAccess: [
-    //   {
-    //     type: "Role",
-    //     id: "18a4783c-866b-4cc7-a460-3d5e5662c884", // Application.ReadWrite.OwnedBy
-    //   },
-    // ],
-    // We must grant permissions for AAD graph, since Pulumi AAD provider uses that instead of Microsoft Graph
-    resourceAppId: "00000002-0000-0000-c000-000000000000", // AAD Graph
+    resourceAppId: "00000003-0000-0000-c000-000000000000", // Microsoft Graph
     resourceAccess: [
       {
         type: "Role",
-        id: "824c81eb-e3f8-4ee6-8f6d-de7f50d565b7", // Application.ReadWrite.OwnedBy
+        id: "18a4783c-866b-4cc7-a460-3d5e5662c884", // Application.ReadWrite.OwnedBy
       },
     ],
   },

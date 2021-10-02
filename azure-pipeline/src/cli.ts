@@ -58,6 +58,10 @@ export const main = async () => {
           `Please supply config stored in keyvault secret via "${envVarName}" environment variable.`,
         ),
     ),
+    () => {
+      // Throw custom error to avoid potentially leaking secret contents as error messages
+      throw new Error("The supplied Azure pipeline configuration was invalid");
+    },
   );
   const command = givenCommand ?? cliConfig.defaultCommand.value;
   const pulumiCommandResult = await functionality.runPulumiPipelineFromConfig({

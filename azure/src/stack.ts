@@ -30,7 +30,7 @@ export interface PulumiAzureBackendStackAcquiringConfig {
  * @param {PulumiAzureBackendStackAcquiringConfig} parameters The parameters capturing necessary information to get or create the Pulumi stack.
  * @returns {automation.Stack} The Pulumi stack that was selected or created.
  */
-export const getOrCreateStackWithAzureBackend = async (
+export const getOrCreateStackWithAzureBackend = (
   parameters: PulumiAzureBackendStackAcquiringConfig,
 ) => {
   return automation.LocalWorkspace.createOrSelectStack(

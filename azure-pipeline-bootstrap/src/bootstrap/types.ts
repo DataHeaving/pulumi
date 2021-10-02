@@ -111,5 +111,3 @@ export const servicePrincipalAppRoleAssignment = t.type({
 export type ServicePrincipalAppRoleAssignment = t.TypeOf<
   typeof servicePrincipalAppRoleAssignment
 >;
-
-export const AZURE_CLIENT_ID_ENV_NAME = "AZURE_CLIENT_ID";

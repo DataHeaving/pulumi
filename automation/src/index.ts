@@ -6,7 +6,7 @@ export * from "./init";
 export * from "./run";
 
 export const runPulumiPipeline = async <
-  TCommands extends [...Array<run.PulumiCommand>],
+  TCommands extends [...ReadonlyArray<run.PulumiCommand>],
 >(
   stack: pulumi.Stack,
   plugins: ReadonlyArray<init.PulumiPluginDescription>,

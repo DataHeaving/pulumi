@@ -212,6 +212,10 @@ const loadConfig = async (
           : {
               ...envNameOrConfig,
               subscriptionId: envNameOrConfig.subscriptionId ?? subscriptionId,
+              envSpecificAuthOverride:
+                bootstrapperApp.type === "msi"
+                  ? undefined
+                  : envNameOrConfig.envSpecificSPAuthOverride,
             },
       ),
     },

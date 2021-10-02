@@ -1,5 +1,6 @@
 import * as t from "io-ts";
 import * as validation from "@data-heaving/common-validation";
+import * as pipeline from "./bootstrap";
 
 export const booleanString = t.refinement(
   t.string,
@@ -46,6 +47,14 @@ export const organization = t.type(
                 {
                   location: validation.nonEmptyString,
                   subscriptionId: validation.uuid,
+                  envSpecificSPAuthOverride: t.partial(
+                    {
+                      applicationRequiredResourceAccess: t.array(
+                        pipeline.applicationRequiredResourceAccess,
+                      ),
+                    },
+                    "EnvSpecifcSPAuthOverride",
+                  ),
                 },
                 "EnvironmentInfoOptional",
               ),

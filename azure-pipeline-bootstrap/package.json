@@ -1,6 +1,6 @@
 {
   "name": "@data-heaving/pulumi-azure-pipeline-bootstrap",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "author": {
     "name": "Stanislav Muhametsin",
     "email": "346799+stazz@users.noreply.github.com",
@@ -32,7 +32,7 @@
     "@data-heaving/azure-kv-secret": "^1.0.0",
     "@data-heaving/common-validation": "^1.0.0",
     "@data-heaving/pulumi-azure-pipeline": "^1.5.3",
-    "@data-heaving/pulumi-azure-pipeline-setup": "^1.1.3",
+    "@data-heaving/pulumi-azure-pipeline-setup": "^1.2.0",
     "@microsoft/microsoft-graph-client": "^3.0.0",
     "cross-fetch": "^3.1.4"
   },
@@ -51,10 +51,10 @@
     "@data-heaving/pulumi-azure": "^1.0.1",
     "@data-heaving/pulumi-azure-pipeline": "^1.5.3",
     "@data-heaving/pulumi-azure-pipeline-config": "^1.0.0",
-    "@data-heaving/pulumi-azure-pipeline-setup": "^1.1.3",
+    "@data-heaving/pulumi-azure-pipeline-setup": "^1.2.0",
     "@microsoft/microsoft-graph-client": "^3.0.0",
     "@pulumi/azure-native": "1.24.0",
-    "@pulumi/azuread": "^4.3.0",
+    "@pulumi/azuread": "^5.3.0",
     "@pulumi/tls": "^4.0.0",
     "@pulumi/pulumi": "^3.11.0",
     "@typescript-eslint/eslint-plugin": "4.30.0",
