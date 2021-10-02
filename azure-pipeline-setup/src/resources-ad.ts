@@ -1,18 +1,15 @@
 import * as ad from "@pulumi/azuread";
 import * as tls from "@pulumi/tls";
 import * as utils from "@data-heaving/common";
+import * as types from "./types";
 
 export interface Inputs {
   organization: string;
   envName: string;
-  certificateConfig: SPCertificateInfo;
+  certificateConfig: types.SPCertificateInfo;
+  requiredResourceAccesses: ReadonlyArray<types.ApplicationRequiredResourceAccesses>;
 }
 
-export interface SPCertificateInfo {
-  rsaBits: number;
-  validityHours: number;
-  subject: tls.types.input.SelfSignedCertSubject;
-}
 const createResourcesForSingleEnv = async ({
   organization,
   envName,
@@ -21,10 +18,12 @@ const createResourcesForSingleEnv = async ({
     validityHours: certValidityHours,
     subject: certSubject,
   },
+  requiredResourceAccesses,
 }: // eslint-disable-next-line @typescript-eslint/require-await
 Inputs) => {
   const app = new ad.Application(envName, {
     displayName: `${organization}-${envName}-deployer`,
+    requiredResourceAccesses: [...requiredResourceAccesses],
   });
 
   const sp = new ad.ServicePrincipal(envName, {
@@ -60,6 +59,30 @@ Inputs) => {
     ),
     // usage: "Verify",
   });
+
+  await Promise.all(
+    requiredResourceAccesses.flatMap(({ resourceAppId, resourceAccesses }) => {
+      return resourceAccesses.map(
+        async ({ id }) =>
+          new ad.AppRoleAssignment(`${envName}-${resourceAppId}-${id}`, {
+            principalObjectId: sp.objectId,
+            resourceObjectId: (
+              await ad.getServicePrincipal({
+                applicationId: resourceAppId,
+              })
+            ).objectId,
+            // new ad.ServicePrincipal(
+            //   `resource-app-${resourceAppId}`,
+            //   {
+            //     applicationId: resourceAppId,
+            //     useExisting: true,
+            //   },
+            // ).objectId,
+            appRoleId: id,
+          }),
+      );
+    }),
+  );
 
   return {
     sp,

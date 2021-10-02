@@ -35,12 +35,8 @@ export interface PulumiPipelineAuthInfoSP {
   certPEM: pulumi.Output<string>;
 }
 
-export interface PulumiPipelineAuthInfoMSI {
-  type: "msi";
-  sharedSARGName: string;
-  sharedSAName: string;
-  containerPrefixString: string;
-}
+export type PulumiPipelineAuthInfoMSI = types.PulumiPipelineAuthInfoMSI;
+
 const createResourcesForSingleEnv = async (inputs: Inputs) => {
   const cicdInfo = await createCICDRG(inputs);
   await createManagedRG(inputs, cicdInfo);
