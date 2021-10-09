@@ -38,7 +38,7 @@ jobs:
             exit 0
           fi
 
-          npm ci
+          npm ci --ignore-scripts
           npm install --no-save @jsdevtools/npm-publish
           # We must invoke tests via Docker, as the tests are using Pulumi executables
           cd ..

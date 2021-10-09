@@ -44,7 +44,7 @@ jobs:
           set -e
 
           cd ${{ matrix.dir }}
-          npm ci
+          npm ci --ignore-scripts
           npm run build
 
           # We must invoke tests via Docker, as the tests are using Pulumi executables

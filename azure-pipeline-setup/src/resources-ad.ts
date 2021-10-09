@@ -69,28 +69,28 @@ const createResourcesForSingleEnv = async ({
     // usage: "Verify",
   });
 
-  await Promise.all(
-    requiredResourceAccesses.flatMap(({ resourceAppId, resourceAccess }) => {
-      return resourceAccess.map(
-        async ({ id }) =>
-          new ad.AppRoleAssignment(`${envName}-${resourceAppId}-${id}`, {
-            principalObjectId: sp.objectId,
-            resourceObjectId: (
-              await ad.getServicePrincipal({
-                applicationId: resourceAppId,
-              })
-            ).objectId,
-            // new ad.ServicePrincipal(
-            //   `resource-app-${resourceAppId}`,
-            //   {
-            //     applicationId: resourceAppId,
-            //     useExisting: true,
-            //   },
-            // ).objectId,
-            appRoleId: id,
-          }),
-      );
-    }),
+  (
+    await Promise.all(
+      requiredResourceAccesses.map(
+        async ({ resourceAppId, resourceAccess }) => ({
+          resourceObjectId: (
+            await ad.getServicePrincipal({
+              applicationId: resourceAppId,
+            })
+          ).objectId,
+          resourceAccess,
+        }),
+      ),
+    )
+  ).flatMap(({ resourceObjectId, resourceAccess }) =>
+    resourceAccess.map(
+      ({ id }) =>
+        new ad.AppRoleAssignment(`${envName}-${resourceObjectId}-${id}`, {
+          principalObjectId: sp.objectId,
+          resourceObjectId,
+          appRoleId: id,
+        }),
+    ),
   );
 
   return {
