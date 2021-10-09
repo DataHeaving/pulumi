@@ -19,8 +19,8 @@ const createResourcesForSingleEnv = async ({
     subject: certSubject,
   },
   requiredResourceAccesses,
-}: // eslint-disable-next-line @typescript-eslint/require-await
-Inputs) => {
+}: Inputs) => {
+  const owners = [(await ad.getClientConfig()).objectId];
   const app = new ad.Application(envName, {
     displayName: `${organization}-${envName}-deployer`,
     requiredResourceAccesses: requiredResourceAccesses.map(
@@ -29,10 +29,14 @@ Inputs) => {
         resourceAccesses: resourceAccess,
       }),
     ),
+    // The owners must be specified explicitly with AzureAD provider version 5+
+    // Otherwise e.g. setting app permissions will not work.
+    owners,
   });
 
   const sp = new ad.ServicePrincipal(envName, {
     applicationId: app.applicationId,
+    owners,
   });
 
   const key = new tls.PrivateKey(envName, {
