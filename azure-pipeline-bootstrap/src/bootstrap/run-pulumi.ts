@@ -20,13 +20,11 @@ export interface Inputs {
   organization: OrganizationInfo;
   spAuthStorageConfig: SPAuthStorageConfig | undefined;
   pulumiEncryptionKeyBits: number;
-  storeBootstrapPipelineConfigToKV:
-    | {
-        secretName: string;
-        clientId: string;
-        resourceId: string;
-      }
-    | undefined;
+  storeBootstrapPipelineConfigToKV: {
+    secretName: string | undefined;
+    clientId: string;
+    resourceId: string;
+  };
 }
 
 export interface Outputs {
@@ -34,6 +32,7 @@ export interface Outputs {
   kvName: string;
   backendConfig: pulumiAzure.PulumiAzureBackendConfig;
   backendStorageAccountKey: string;
+  bootstrapAuth: pipelineConfig.PipelineConfigAuth;
 }
 
 export interface OrganizationInfo {
@@ -77,7 +76,11 @@ export const ensureRequireCloudResourcesForPulumiStateExist = async (
     ),
   ]);
 
-  await storeBootstrapAuthToKVIfNeeded(inputs, saResult, kvResult);
+  const bootstrapAuth = await storeBootstrapAuthToKVIfNeeded(
+    inputs,
+    saResult,
+    kvResult,
+  );
 
   const { vaultName, encryptionKeyURL } = kvResult;
   const { storageAccountName, storageAccountKey } = saResult;
@@ -90,6 +93,7 @@ export const ensureRequireCloudResourcesForPulumiStateExist = async (
       encryptionKeyURL,
     },
     backendStorageAccountKey: storageAccountKey,
+    bootstrapAuth,
   };
 };
 
@@ -365,22 +369,25 @@ const storeBootstrapAuthToKVIfNeeded = async (
     encryptionKeyURL,
   }: common.DePromisify<ReturnType<typeof ensureKeyVaultIsConfigured>>,
 ) => {
-  const { storeBootstrapPipelineConfigToKV: storeBootstrapAuthToKV } = inputs;
-  if (storeBootstrapAuthToKV) {
+  const {
+    storeBootstrapPipelineConfigToKV: { clientId, resourceId, secretName },
+  } = inputs;
+  const auth: pipelineConfig.PipelineConfigAuth = inputs.spAuthStorageConfig
+    ? {
+        type: "sp",
+        clientId,
+        keyPEM: inputs.spAuthStorageConfig.keyPEM,
+        certPEM: inputs.spAuthStorageConfig.certPEM,
+        storageAccountKey,
+      }
+    : {
+        type: "msi",
+        clientId,
+        resourceId,
+      };
+  if (secretName) {
     const spPipelineAuth: pipelineConfig.PipelineConfig = {
-      auth: inputs.spAuthStorageConfig
-        ? {
-            type: "sp",
-            clientId: storeBootstrapAuthToKV.clientId,
-            keyPEM: inputs.spAuthStorageConfig.keyPEM,
-            certPEM: inputs.spAuthStorageConfig.certPEM,
-            storageAccountKey,
-          }
-        : {
-            type: "msi",
-            clientId: storeBootstrapAuthToKV.clientId,
-            resourceId: storeBootstrapAuthToKV.resourceId,
-          },
+      auth,
       azure: {
         tenantId: inputs.azure.tenantId,
         subscriptionId: inputs.azure.subscriptionId,
@@ -391,7 +398,6 @@ const storeBootstrapAuthToKVIfNeeded = async (
         encryptionKeyURL,
       },
     };
-    const { secretName } = storeBootstrapAuthToKV;
     const { createNew, secretValue } = await upsertSecret(
       inputs.credentials,
       kvURL,
@@ -404,4 +410,5 @@ const storeBootstrapAuthToKVIfNeeded = async (
       secretValue,
     });
   }
+  return auth;
 };

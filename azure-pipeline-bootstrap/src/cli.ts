@@ -38,7 +38,7 @@ const main = async () => {
     configPath,
   );
   try {
-    await program.main({
+    return await program.main({
       credentials,
       doChanges,
       ...programConfig,
@@ -212,6 +212,10 @@ const loadConfig = async (
           : {
               ...envNameOrConfig,
               subscriptionId: envNameOrConfig.subscriptionId ?? subscriptionId,
+              envSpecificAuthOverride:
+                bootstrapperApp.type === "msi"
+                  ? undefined
+                  : envNameOrConfig.envSpecificSPAuthOverride,
             },
       ),
     },

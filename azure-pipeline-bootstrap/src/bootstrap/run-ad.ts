@@ -9,14 +9,13 @@ import * as types from "./types";
 import * as events from "./events";
 import * as utils from "./run-common";
 import * as certs from "./run-certs";
-import { isDeepStrictEqual } from "util";
 
 export interface Inputs {
   eventEmitter: events.BootstrapEventEmitter;
   graphClient: graph.Client;
   bootstrapperApp: {
     displayName: string;
-    willNeedToCreateAADApps: boolean;
+    appRequiredPermissions: ReadonlyArray<types.ApplicationRequiredResourceAccess>;
   };
   certificatePEM: string;
 }
@@ -24,7 +23,7 @@ export interface Inputs {
 export const ensureBootstrapSPIsConfigured = async ({
   eventEmitter,
   graphClient,
-  bootstrapperApp: { displayName, willNeedToCreateAADApps },
+  bootstrapperApp: { displayName, appRequiredPermissions },
   certificatePEM,
 }: Inputs) => {
   // Ensure that app ("Enterprise Application") exists
@@ -39,10 +38,16 @@ export const ensureBootstrapSPIsConfigured = async ({
   // - ensure that service principal("App Registration") exists, and
   // - ensure that app has correct permissions configured (if needed)
   // - ensure that app has correct certificate-based authentication configured
+  const willNeedPermissions = appRequiredPermissions.length > 0;
   const [sp] = await Promise.all([
     ensureBootstrapperSPExists(eventEmitter, graphClient, appId),
-    willNeedToCreateAADApps
-      ? grantAppPermissions(eventEmitter, graphClient, app)
+    willNeedPermissions
+      ? grantAppPermissions(
+          eventEmitter,
+          graphClient,
+          app,
+          appRequiredPermissions,
+        )
       : undefined,
     ensureCertificateAuthenticationExists(
       eventEmitter,
@@ -52,8 +57,13 @@ export const ensureBootstrapSPIsConfigured = async ({
     ),
   ]);
 
-  if (willNeedToCreateAADApps) {
-    await grantAdminConsent(eventEmitter, graphClient, sp);
+  if (willNeedPermissions) {
+    await grantAdminConsent(
+      eventEmitter,
+      graphClient,
+      sp,
+      appRequiredPermissions,
+    );
   }
 
   return {
@@ -78,6 +88,7 @@ const ensureBootstrapperAppExists = async (
     await client
       .api(appGraphApi)
       .filter(`displayName eq '${bootstrapperAppName}'`)
+      // .header("Accept", "application/json;odata.metadata=full;charset=utf-8") // Use this to include more @odata.xyz properties, if needed. The "IEEE754Compatible" option can also be present, as boolean. ( Basically, setting it to true will make all numbers be serialized as strings: https://docs.microsoft.com/en-us/openspecs/odata_standards/ms-odatajson/e05b68cc-1abc-4c92-86f6-8867e73624f4 ).
       .get(),
   ).value[0];
   const application =
@@ -185,30 +196,11 @@ const ensureCertificateAuthenticationExists = async (
   }
 };
 
-const appRequiredPermissions: Array<types.ApplicationRequiredResourceAccess> = [
-  {
-    // resourceAppId: "00000003-0000-0000-c000-000000000000", // Microsoft Graph
-    // resourceAccess: [
-    //   {
-    //     type: "Role",
-    //     id: "18a4783c-866b-4cc7-a460-3d5e5662c884", // Application.ReadWrite.OwnedBy
-    //   },
-    // ],
-    // We must grant permissions for AAD graph, since Pulumi AAD provider uses that instead of Microsoft Graph
-    resourceAppId: "00000002-0000-0000-c000-000000000000", // AAD Graph
-    resourceAccess: [
-      {
-        type: "Role",
-        id: "824c81eb-e3f8-4ee6-8f6d-de7f50d565b7", // Application.ReadWrite.OwnedBy
-      },
-    ],
-  },
-];
-
 const grantAppPermissions = async (
   eventEmitter: events.BootstrapEventEmitter,
   client: graph.Client,
   application: types.Application,
+  appRequiredPermissions: ReadonlyArray<types.ApplicationRequiredResourceAccess>,
 ) => {
   const { id } = application;
   const patchableAccess = createPatchableRequiredAccessArray(
@@ -261,6 +253,7 @@ const grantAdminConsent = async (
   eventEmitter: events.BootstrapEventEmitter,
   client: graph.Client,
   servicePrincipal: types.ServicePrincipal,
+  appRequiredPermissions: ReadonlyArray<types.ApplicationRequiredResourceAccess>,
 ) => {
   // We need to find out which permission we need to grant admin consent for
   const spRoleAssignmentsApi = `${spGraphApi}/${servicePrincipal.id}/appRoleAssignments`;
@@ -348,40 +341,55 @@ const grantAdminConsent = async (
 
 const createPatchableRequiredAccessArray = (
   existingPermissions: ReadonlyArray<types.ApplicationRequiredResourceAccess>,
-  additionalPermissions: ReadonlyArray<types.ApplicationRequiredResourceAccess>,
+  requiredPermissions: ReadonlyArray<types.ApplicationRequiredResourceAccess>,
 ) => {
-  const permissionAddInfos: Array<AppPermissionAddInfo> = [];
-  // One can get all possible permissions via https://graph.windows.net/myorganization/applicationRefs/00000003-0000-0000-c000-000000000000?api-version=2.0&lang=en
-  // And then examining items in "oauth2Permissions" array
-  // Notice!!!! the Pulumi azuread provider uses azure-sdk-for-go, which underneath uses graphrbac, which underneath uses legacy Azure AD Graph endpoint ( https://graph.windows.net/ )!
-  // This is why we must, instead of adding Microsoft Graph permissions, add Azure AD Graph permissions!
-  for (const additionalPermission of additionalPermissions) {
-    addToPatchablePermissions(
-      existingPermissions,
-      permissionAddInfos,
-      additionalPermission,
-    );
-  }
+  // TODO instead of this mess, just reduce existing and required permissions to Record<string, Array<string>>, and do delta from those data structures instead.
+  const existingRecord = getPermissionRecord(existingPermissions);
+  const requiredRecord = getPermissionRecord(requiredPermissions);
   const patchableAccess: Array<types.ApplicationRequiredResourceAccess> = [];
-  if (permissionAddInfos.length > 0) {
-    const deduplicatedAdditionalPermissions = common.deduplicate(
-      permissionAddInfos,
-      ({ indexToRemove }) => `${indexToRemove}`,
-    );
-    if (deduplicatedAdditionalPermissions.length < permissionAddInfos.length) {
-      throw new Error("Not implemented: complex permission delta");
+  for (const [resourceAppId, requiredAccess] of Object.entries(
+    requiredRecord,
+  )) {
+    const existingResourcePermissions = existingRecord[resourceAppId];
+    if (existingResourcePermissions) {
+      const requiredKeys = Object.keys(requiredAccess);
+      if (requiredKeys.some((k) => !(k in existingResourcePermissions))) {
+        patchableAccess.push({
+          resourceAppId,
+          resourceAccess: common
+            .deduplicate(
+              requiredKeys.concat(Object.keys(existingResourcePermissions)),
+              (id) => id,
+            )
+            .map((id) => ({
+              id,
+              type: (existingResourcePermissions[id] ?? requiredAccess[id])
+                .type,
+            })),
+        });
+      }
+    } else {
+      patchableAccess.push({
+        resourceAppId,
+        resourceAccess: Object.entries(requiredAccess).map(
+          ([id, { type }]) => ({ id, type }),
+        ),
+      });
     }
-    patchableAccess.push(...existingPermissions);
-    for (const {
-      indexToRemove,
-      accessToAdd,
-    } of deduplicatedAdditionalPermissions) {
-      if (indexToRemove >= 0) {
-        patchableAccess[indexToRemove].resourceAccess.concat(
-          accessToAdd.resourceAccess,
-        );
-      } else {
-        patchableAccess.push(accessToAdd);
+  }
+  if (patchableAccess.length > 0) {
+    // We are modifying app permissions -> don't lose existing ones.
+    for (const [resourceAppId, existingAccess] of Object.entries(
+      existingRecord,
+    )) {
+      const requiredResourcePermissions = requiredRecord[resourceAppId];
+      if (!requiredResourcePermissions) {
+        patchableAccess.push({
+          resourceAppId,
+          resourceAccess: Object.entries(existingAccess).map(
+            ([id, { type }]) => ({ id, type }),
+          ),
+        });
       }
     }
   }
@@ -389,43 +397,21 @@ const createPatchableRequiredAccessArray = (
   return patchableAccess;
 };
 
-interface AppPermissionAddInfo {
-  indexToRemove: number;
-  accessToAdd: types.ApplicationRequiredResourceAccess;
-}
-
-const addToPatchablePermissions = (
-  existingAccess: ReadonlyArray<types.ApplicationRequiredResourceAccess>,
-  accessToAdd: Array<AppPermissionAddInfo>,
-  requiredAccess: types.ApplicationRequiredResourceAccess,
-) => {
-  const existingForResourceAppIdx = existingAccess.findIndex(
-    (r) => r.resourceAppId === requiredAccess.resourceAppId,
-  );
-  const missingAccess =
-    existingForResourceAppIdx < 0
-      ? []
-      : requiredAccess.resourceAccess.filter(
-          (r) =>
-            !existingAccess[existingForResourceAppIdx].resourceAccess.some(
-              (a) => isDeepStrictEqual(r, a),
-            ),
-        );
-  if (existingForResourceAppIdx < 0 || missingAccess.length > 0) {
-    accessToAdd.push({
-      indexToRemove: existingForResourceAppIdx,
-      accessToAdd:
-        existingForResourceAppIdx < 0 ||
-        missingAccess.length === requiredAccess.resourceAccess.length
-          ? requiredAccess
-          : {
-              resourceAppId: requiredAccess.resourceAppId,
-              resourceAccess:
-                requiredAccess.resourceAccess.concat(missingAccess),
-            },
-    });
-  }
-};
+const getPermissionRecord = (
+  permissions: ReadonlyArray<types.ApplicationRequiredResourceAccess>,
+) =>
+  permissions.reduce<
+    Record<string, Record<string, Omit<types.ApplicationResourceAccess, "id">>>
+  >((r, p) => {
+    const currentDic = common.getOrAddGeneric(r, p.resourceAppId, () => ({}));
+    for (const { id, ...ra } of p.resourceAccess) {
+      // if (id in currentDic && !isDeepStrictEqual(ra, currentDic[id])) {
+      //   throw new Error(`Duplicate ID ${id} with different roles.`);
+      // }
+      currentDic[id] = ra;
+    }
+    return r;
+  }, {});
 
 const graphAPIListOf = <TType extends t.Mixed>(item: TType) =>
   t.type(
@@ -488,19 +474,4 @@ export const getCurrentPrincipalInfo = async (
       principalType: "User",
     };
   }
-  // try {
-  // } catch (e) {
-  //   if (
-  //     e instanceof graph.GraphError &&
-  //     e.message ===
-  //       "/me request is only valid with delegated authentication flow."
-  //   ) {
-  //     if (givenClientId) {
-  //     } else {
-  //       throw new Error("Not logged in as user nor as service principal...?");
-  //     }
-  //   } else {
-  //     throw e;
-  //   }
-  // }
 };

@@ -12,16 +12,22 @@ export type UpsertResult<T> = T & {
   createNew: boolean;
 };
 
+export const applicationResourceAccess = t.type(
+  {
+    type: t.keyof({ Role: null, Scope: null }), // validation.nonEmptyString,
+    id: validation.uuid,
+  },
+  "ResourceAccess",
+);
+
+export type ApplicationResourceAccess = t.TypeOf<
+  typeof applicationResourceAccess
+>;
+
 export const applicationRequiredResourceAccess = t.type(
   {
     resourceAppId: validation.uuid,
-    resourceAccess: t.array(
-      t.type({
-        type: validation.nonEmptyString, // "Role" | something else
-        id: validation.uuid,
-      }),
-      "ResourceAccessList",
-    ),
+    resourceAccess: t.array(applicationResourceAccess, "ResourceAccessList"),
   },
   "RequiredResourceAccess",
 );
@@ -51,7 +57,7 @@ export type ApplicationCredential = t.TypeOf<typeof applicationKeyCredential>;
 
 export const application = t.type(
   {
-    ["@odata.id"]: validation.urlWithPath,
+    // ["@odata.id"]: validation.urlWithPath,
     id: validation.uuid,
     appId: validation.uuid,
     displayName: t.string,
@@ -69,7 +75,7 @@ export type Application = t.TypeOf<typeof application>;
 
 export const servicePrincipal = t.type(
   {
-    ["@odata.id"]: validation.urlWithPath,
+    // ["@odata.id"]: validation.urlWithPath,
     id: validation.uuid,
     appId: validation.uuid,
     displayName: t.string,
@@ -96,7 +102,7 @@ export const servicePrincipal = t.type(
 export type ServicePrincipal = t.TypeOf<typeof servicePrincipal>;
 
 export const servicePrincipalAppRoleAssignment = t.type({
-  ["@odata.id"]: validation.urlWithPath,
+  // ["@odata.id"]: validation.urlWithPath,
   id: validation.nonEmptyString,
   appRoleId: validation.uuid,
   createdDateTime: validation.isoDateString,
@@ -111,5 +117,3 @@ export const servicePrincipalAppRoleAssignment = t.type({
 export type ServicePrincipalAppRoleAssignment = t.TypeOf<
   typeof servicePrincipalAppRoleAssignment
 >;
-
-export const AZURE_CLIENT_ID_ENV_NAME = "AZURE_CLIENT_ID";
