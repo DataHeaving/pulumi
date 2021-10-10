@@ -1,5 +1,6 @@
 import * as t from "io-ts";
 import * as validation from "@data-heaving/common-validation";
+import * as pipeline from "./bootstrap";
 
 export const booleanString = t.refinement(
   t.string,
@@ -26,38 +27,75 @@ export type PulumiPipelineEncryptionKeyBits = t.TypeOf<
   typeof pipelineEncryptionKeyBits
 >;
 
-export const organization = t.type(
-  {
-    name: validation.nonEmptyString,
-    location: validation.nonEmptyString,
-    environments: t.array(
-      t.union(
-        [
-          t.string,
-          t.intersection(
+const providerRegistrations = t.array(
+  validation.nonEmptyString,
+  "ProviderRegistrationList",
+);
+
+export const organization = t.intersection(
+  [
+    t.type(
+      {
+        name: validation.nonEmptyString,
+        location: validation.nonEmptyString,
+        environments: t.array(
+          t.union(
             [
-              t.type(
-                {
-                  name: t.string,
-                },
-                "EnvironmentInfoMandatory",
-              ),
-              t.partial(
-                {
-                  location: validation.nonEmptyString,
-                  subscriptionId: validation.uuid,
-                },
-                "EnvironmentInfoOptional",
+              t.string,
+              t.intersection(
+                [
+                  t.type(
+                    {
+                      name: t.string,
+                    },
+                    "EnvironmentInfoMandatory",
+                  ),
+                  t.partial(
+                    {
+                      location: validation.nonEmptyString,
+                      subscriptionId: validation.uuid,
+                      envSpecificSPAuthOverride: t.partial(
+                        {
+                          applicationRequiredResourceAccess: t.array(
+                            pipeline.applicationRequiredResourceAccess,
+                          ),
+                        },
+                        "EnvSpecifcSPAuthOverride",
+                      ),
+                      providerRegistrations: t.union(
+                        [
+                          providerRegistrations,
+                          t.type(
+                            {
+                              ignoreDefaultProviderRegistrations: t.boolean,
+                              providerRegistrations,
+                            },
+                            "EnvironmentProviderRegistrationOverride",
+                          ),
+                        ],
+                        "EnvironmentProviderRegistrations",
+                      ),
+                    },
+                    "EnvironmentInfoOptional",
+                  ),
+                ],
+                "EnvironmentInfo",
               ),
             ],
-            "EnvironmentInfo",
+            "EnvironmentConfig",
           ),
-        ],
-        "EnvironmentConfig",
-      ),
-      "EnvironmentConfigList",
+          "EnvironmentConfigList",
+        ),
+      },
+      "OrganizationConfigMandatory",
     ),
-  },
+    t.partial(
+      {
+        defaultProviderRegistrations: providerRegistrations,
+      },
+      "OrganizationConfigOptional",
+    ),
+  ],
   "OrganizationConfig",
 );
 export type Organization = t.TypeOf<typeof organization>;

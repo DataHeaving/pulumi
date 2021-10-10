@@ -6,6 +6,7 @@ import * as common from "@data-heaving/common";
 import * as pulumi from "@data-heaving/pulumi-azure-pipeline-setup";
 import * as fs from "fs/promises";
 import * as pulumiAzure from "@data-heaving/pulumi-azure";
+import * as pipelineConfig from "@data-heaving/pulumi-azure-pipeline-config";
 import * as types from "./types";
 import * as events from "./events";
 import * as ad from "./run-ad";
@@ -21,6 +22,18 @@ export interface Inputs {
   organization: pulumiSetup.OrganizationInfo;
   pulumiEncryptionKeyBits: number;
   bootstrapperPipelineConfigSecretName: string | undefined;
+}
+
+export interface Outputs {
+  cicdRGName: string;
+  kvName: string;
+  pulumiConfigInfo: {
+    backendConfig: pulumiAzure.PulumiAzureBackendConfig;
+    auth: pulumiAzure.PulumiAzureBackendAuth;
+  };
+  envSpecificPipelineConfigReader: pulumi.EnvSpecificPipelineConfigReader;
+  bootstrapAuth: pipelineConfig.PipelineConfigAuth;
+  keyAndCertPath: string;
 }
 
 export type BootstrapperApp = BootstrapperAppSP | BootstrapperAppMSI;
@@ -40,7 +53,7 @@ export interface BootstrapperAppSP {
     pfxPath: string;
     pfxPassword: string;
   };
-  willNeedToCreateAADApps: boolean;
+  appRequiredPermissions: ReadonlyArray<types.ApplicationRequiredResourceAccess>;
   configSecretName: string;
 }
 
@@ -51,11 +64,16 @@ export interface BootstrapperAppMSI {
   resourceId: string;
 }
 
-export const performBootstrap = async (inputs: Inputs) => {
+export const performBootstrap = async (inputs: Inputs): Promise<Outputs> => {
   const bootstrapperInfo = await setupBootstrapperApp(inputs);
-  const { backendConfig, backendStorageAccountKey, cicdRGName, kvName } =
-    await runWithBootstrapper(inputs, bootstrapperInfo);
-  const { bootstrapperPulumiAuth } = bootstrapperInfo;
+  const {
+    backendConfig,
+    backendStorageAccountKey,
+    cicdRGName,
+    kvName,
+    bootstrapAuth,
+  } = await runWithBootstrapper(inputs, bootstrapperInfo);
+  const { bootstrapperPulumiAuth, keyAndCertPath } = bootstrapperInfo;
   if (bootstrapperPulumiAuth.type === "sp") {
     bootstrapperPulumiAuth.backendStorageAccountKey = backendStorageAccountKey;
   }
@@ -68,6 +86,8 @@ export const performBootstrap = async (inputs: Inputs) => {
     },
     envSpecificPipelineConfigReader:
       bootstrapperInfo.envSpecificPipelineConfigReader,
+    bootstrapAuth,
+    keyAndCertPath,
   };
 };
 
@@ -99,6 +119,7 @@ const setupBootstrapperApp = async ({
     common.deepCopy(envSpecificPipelineConfigReader),
   );
   let msiResourceID = "";
+  let keyAndCertPath = "";
   switch (bootstrapperApp.type) {
     case "sp":
       {
@@ -121,12 +142,13 @@ const setupBootstrapperApp = async ({
           certificatePEM: certPEM,
         });
         ({ clientId, principalId } = clientAndPrincipalID);
-        const { keyPEM, keyAndCertPath } =
+        let keyPEM: string;
+        ({ keyPEM, keyAndCertPath } =
           await certs.ensureCertificateCredentialsFileExists(
             spAuth.tempDir,
             keyPath,
             certPEM,
-          );
+          ));
         spAuthStorageConfig = {
           keyPEM,
           certPEM,
@@ -181,6 +203,7 @@ const setupBootstrapperApp = async ({
     principalId,
     clientId,
     msiResourceID,
+    keyAndCertPath,
     spAuthStorageConfig,
     envSpecificPipelineConfigReader,
   };
@@ -211,13 +234,11 @@ const runWithBootstrapper = async (
     principalId,
     spAuthStorageConfig,
     pulumiEncryptionKeyBits,
-    storeBootstrapPipelineConfigToKV: bootstrapperPipelineConfigSecretName
-      ? {
-          secretName: bootstrapperPipelineConfigSecretName,
-          clientId,
-          resourceId: msiResourceID,
-        }
-      : undefined,
+    storeBootstrapPipelineConfigToKV: {
+      secretName: bootstrapperPipelineConfigSecretName,
+      clientId,
+      resourceId: msiResourceID,
+    },
   });
 };
 

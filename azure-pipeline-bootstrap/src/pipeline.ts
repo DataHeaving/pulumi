@@ -5,6 +5,7 @@ import * as pulumiSetup from "@data-heaving/pulumi-azure-pipeline-setup";
 import * as bootstrap from "./bootstrap";
 import * as types from "./types";
 import * as events from "./events";
+import * as registration from "./provider-registration";
 
 export interface Inputs {
   eventEmitters: PulumiPipelineEventEmitters;
@@ -58,7 +59,7 @@ export type BootstrapperApp = BootstrapperAppSP | BootstrapperAppMSI;
 
 export type BootstrapperAppSP = Omit<
   bootstrap.BootstrapperAppSP,
-  "willNeedToCreateAADApps"
+  "appRequiredPermissions"
 > & {
   /**
    * This exists only for SP info, as MSIs are unable to do any AAD changes.
@@ -87,6 +88,8 @@ export const main = async ({
     kvName,
     pulumiConfigInfo,
     envSpecificPipelineConfigReader,
+    bootstrapAuth,
+    keyAndCertPath,
   } = await bootstrap.performBootstrap({
     eventEmitter: bootstrapEventEmitter,
     credentials,
@@ -103,16 +106,32 @@ export const main = async ({
   });
   // For some reason, due some TS compiler bug, we must specify generic argument explicitly.
   const command = doChanges ? ("up" as const) : ("preview" as const);
-  return await pipeline.runPulumiPipeline<"up" | "preview">(
+  return await pipeline.runPulumiPipeline<typeof command>(
     {
       pulumi: {
-        auth: pulumiConfigInfo.auth,
-        backendConfig: pulumiConfigInfo.backendConfig,
+        ...pulumiConfigInfo,
         programArgs: {
           projectName: "bootstrap",
           stackName: "main",
-          program: () =>
-            pulumiSetup.pulumiProgram({
+          program: () => {
+            // Create necessary provider namespace registrations
+            handleProviderRegistrations(organization).map(
+              ({ subscriptionId, resourceProviderNamespaces }) =>
+                new registration.ResourceProviderRegistration(
+                  new registration.ResourceProviderRegistrationProvider(
+                    azure.tenantId,
+                    subscriptionId,
+                    bootstrapAuth,
+                    keyAndCertPath,
+                  ),
+                  `provider-registrations-${subscriptionId}`,
+                  {
+                    resourceProviderNamespaces,
+                  },
+                ),
+            );
+            // Handle the CICD setup for environments
+            return pulumiSetup.pulumiProgram({
               organization,
               envSpecificPipelineConfigReader,
               pulumiPipelineConfig: {
@@ -146,7 +165,8 @@ export const main = async ({
                 },
               },
               targetResources,
-            }),
+            });
+          },
         },
       },
       azure: {
@@ -164,12 +184,101 @@ export const main = async ({
 const getBootstrapAppForSetup = (
   app: BootstrapperApp,
   organization: types.Organization,
-): bootstrap.BootstrapperApp =>
-  app.type === "msi"
-    ? app
-    : {
-        ...app,
-        willNeedToCreateAADApps:
-          app.envSpecificPulumiPipelineSPAuth !== undefined &&
-          organization.environments.length > 0,
-      };
+): bootstrap.BootstrapperApp => {
+  let retVal: bootstrap.BootstrapperApp;
+  if (app.type === "sp") {
+    const graphAccess: Array<bootstrap.ApplicationResourceAccess> = [];
+    if (organization.environments.length > 0) {
+      if (
+        app.envSpecificPulumiPipelineSPAuth !== undefined &&
+        organization.environments.some((env) => !env.envSpecificAuthOverride)
+      ) {
+        graphAccess.push({
+          type: "Role",
+          id: "18a4783c-866b-4cc7-a460-3d5e5662c884", // Application.ReadWrite.OwnedBy
+        });
+        if (
+          organization.environments.some(
+            (env) =>
+              ((
+                env.envSpecificAuthOverride as pulumiSetup.PulumiPipelineAuthInfoSP
+              )?.applicationRequiredResourceAccess?.length ?? 0) > 0,
+          )
+        ) {
+          graphAccess.push({
+            type: "Role",
+            id: "06b708a9-e830-4db3-a914-8e69da51d44f", // AppRoleAssignment.ReadWrite.All
+          });
+        }
+      }
+    }
+
+    retVal = {
+      ...app,
+      appRequiredPermissions:
+        graphAccess.length > 0
+          ? [
+              {
+                resourceAppId: "00000003-0000-0000-c000-000000000000", // Microsoft.Graph
+                resourceAccess: graphAccess,
+              },
+            ]
+          : [],
+    };
+  } else {
+    retVal = app;
+  }
+  return retVal;
+};
+
+const handleProviderRegistrations = (organization: types.Organization) => {
+  // Save organization default provider registrations
+  const orgProviderRegistrations =
+    organization.defaultProviderRegistrations ?? [];
+  // Extract provider registration information from each environment
+  const registrationNamespacesForSubscriptions = organization.environments
+    .flatMap(({ providerRegistrations, subscriptionId }) =>
+      (providerRegistrations
+        ? Array.isArray(providerRegistrations)
+          ? // If provider registrations is just string array -> return default registrations + env-specific registrations
+            orgProviderRegistrations.concat(providerRegistrations)
+          : // Don't prepend default registrations if so specified
+            (providerRegistrations.ignoreDefaultProviderRegistrations
+              ? []
+              : orgProviderRegistrations
+            ).concat(providerRegistrations.providerRegistrations)
+        : orgProviderRegistrations
+      ).map((providerRegistration) => ({
+        // For each registration, extract registration namespace + subscription ID
+        subscriptionId,
+        providerRegistration,
+      })),
+    )
+    // Construct record, where key is subscription ID, and value is unprocessed registration namespace array
+    .reduce<Record<string, Array<string>>>(
+      (
+        providerRegistrationsForSubscription,
+        { subscriptionId, providerRegistration },
+      ) => {
+        common
+          .getOrAddGeneric(
+            providerRegistrationsForSubscription,
+            subscriptionId,
+            () => [],
+          )
+          .push(providerRegistration);
+        return providerRegistrationsForSubscription;
+      },
+      {},
+    );
+  // Finally, deduplicate registration namespaces array for each subscription, using case-insensitive string comparison
+  return Object.entries(registrationNamespacesForSubscriptions).map(
+    ([subscriptionId, providerRegistrations]) => ({
+      subscriptionId,
+      resourceProviderNamespaces: common.deduplicate(
+        providerRegistrations,
+        (r) => r.toLowerCase(),
+      ),
+    }),
+  );
+};
